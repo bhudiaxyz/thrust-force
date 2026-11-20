@@ -23,6 +23,9 @@
  *     planet streams in over a few frames instead of freezing one; boot calls it with Infinity.
  *   - warmup(): compiles every shader, including objects that start hidden (flame, shield,
  *     rings, rod, beam, debris), so the first thrust or explosion doesn't hitch.
+ *   - Per planet it also builds landing pads (glow while refuelling), checkpoint beacons (light
+ *     up once passed), mines (spiked, eye pulses faster when hunting) and laser gates (emitters +
+ *     beam, flickering just before switching on); setGhost(pose) shows the best-run ghost.
  *   - sync(game, dt): pumps chunks, poses everything from game state, moves the chase camera
  *     and the shadow-casting sun, updates the effects (fx.ts), then renders.
  *   - burst() / explode(): delegate to Effects (sparks; layered voxel explosions).
@@ -46,7 +49,7 @@
  *   - The camera sits 4 units below its look-at point so floors show their tops and tunnels
  *     read as 3D; portrait screens pull the camera back (z = 30 / aspect).
  *
- * See also: game.ts (state it draws), fx.ts, rock.ts, palette.ts, tier.ts, main.ts; DESIGN.md
+ * See also: core/game.ts (state it draws), fx/effects.ts, render/rock.ts, core/palette.ts, render/tier.ts, main.ts; DESIGN.md
  * "7. Rendering".
  */
 import * as THREE from "three";
@@ -54,12 +57,12 @@ import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
-import type { Game } from "./game";
-import { isAir, isRock, type Level } from "./level";
-import { dotTexture, Effects, pointsLayer } from "./fx";
+import type { Game } from "../core/game";
+import { gateIn, gateOn, GATE_WARN, isAir, isRock, type Level } from "../world/level";
+import { dotTexture, Effects, pointsLayer } from "../fx/effects";
 import type { TierSettings } from "./tier";
 import { BLOCK, blockAt, rockMaterial, TINTLESS, wallMaterial } from "./rock";
-import { COLORS, evenGlow, themeFor, type RGB } from "./palette";
+import { COLORS, evenGlow, themeFor, type RGB } from "../core/palette";
 
 const C = COLORS;
 const WHITE = new THREE.Color(1, 1, 1);
@@ -96,6 +99,12 @@ export class View {
     private turrets: { grp: THREE.Group; barrel: THREE.Object3D }[] = [];
     private fuel: THREE.Group[] = [];
     private reactor = new THREE.Group();
+    private pads: THREE.Mesh[] = [];
+    private beacons: THREE.Mesh[] = [];
+    private mines: THREE.Group[] = [];
+    private gates: { beam: THREE.Mesh; mat: THREE.MeshBasicMaterial }[] = [];
+    private ghost = new THREE.Group();
+    private ghostPose: { x: number; y: number; a: number } | null = null;
     private reactorCore!: THREE.Mesh;
     private reactorLight = new THREE.PointLight(C.light.reactor, 50, 18, 1.6);
     private bullets: THREE.Points;
@@ -196,6 +205,29 @@ export class View {
         hullMesh.castShadow = true;
         this.ship.add(hullMesh, edges, canopy, this.flame, this.shield);
         this.scene.add(this.shipLight);
+
+        // Ghost of the best run: the same hull, translucent, no light or shadow.
+        const ghostMat = new THREE.MeshBasicMaterial({
+            color: new THREE.Color(...C.fixture.ghost),
+            toneMapped: false,
+            transparent: true,
+            opacity: 0.28,
+            depthWrite: false,
+        });
+        this.ghost.add(
+            new THREE.Mesh(hullGeo, ghostMat),
+            new THREE.LineSegments(
+                edges.geometry,
+                new THREE.LineBasicMaterial({
+                    color: new THREE.Color(...C.fixture.ghost),
+                    transparent: true,
+                    opacity: 0.6,
+                    toneMapped: false,
+                })
+            )
+        );
+        this.ghost.visible = false;
+        this.scene.add(this.ghost);
 
         // Pod: glossy orb in a neon ring.
         const orb = new THREE.Mesh(
@@ -351,6 +383,66 @@ export class View {
             return { grp: g, barrel };
         });
 
+        // Landing pads: glowing slabs on their floors.
+        const padGeo = new THREE.BoxGeometry(3, 0.14, 2.6);
+        this.pads = lv.pads.map((p) => {
+            const m = new THREE.Mesh(padGeo, neonMat(C.fixture.pad));
+            m.position.set(p.x, p.y + 0.07, 0);
+            this.levelGroup.add(m);
+            return m;
+        });
+
+        // Checkpoint beacons: small spinning diamonds at each switchback.
+        const beaconGeo = new THREE.OctahedronGeometry(0.35);
+        this.beacons = lv.checkpoints.map((c) => {
+            const m = new THREE.Mesh(beaconGeo, neonMat(C.fixture.checkpoint));
+            m.position.set(c.x, c.y, -0.8);
+            this.levelGroup.add(m);
+            return m;
+        });
+
+        // Mines: spiked dark spheres with a pulsing eye.
+        const mineGeo = new THREE.IcosahedronGeometry(0.45, 0);
+        const spikeGeo = new THREE.OctahedronGeometry(0.62, 0);
+        const mineMat = new THREE.MeshStandardMaterial({
+            color: C.fixture.mineBody,
+            metalness: 0.6,
+            roughness: 0.4,
+            flatShading: true,
+        });
+        this.mines = lv.mines.map(() => {
+            const g = new THREE.Group();
+            const spikes = new THREE.Mesh(spikeGeo, mineMat);
+            spikes.scale.set(0.8, 0.8, 0.8);
+            const eye = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 6), neonMat(C.fixture.mineEye));
+            eye.position.z = 0.45;
+            eye.name = "eye";
+            g.add(new THREE.Mesh(mineGeo, mineMat), spikes, eye);
+            this.levelGroup.add(g);
+            return g;
+        });
+
+        // Laser gates: emitters at both ends, a beam between (shown while on, flickering just before).
+        const emitGeo = new THREE.BoxGeometry(0.5, 0.6, 1.2);
+        const emitMat = new THREE.MeshStandardMaterial({
+            color: C.fixture.gateEmitter,
+            metalness: 0.7,
+            roughness: 0.35,
+        });
+        this.gates = lv.gates.map((gt) => {
+            const mat = neonMat(C.fixture.gate);
+            mat.transparent = true;
+            const beam = new THREE.Mesh(new THREE.BoxGeometry(gt.x1 - gt.x0, 0.12, 0.12), mat);
+            beam.position.set((gt.x0 + gt.x1) / 2, gt.y, 0);
+            for (const x of [gt.x0 + 0.25, gt.x1 - 0.25]) {
+                const e = new THREE.Mesh(emitGeo, emitMat);
+                e.position.set(x, gt.y, 0);
+                this.levelGroup.add(e);
+            }
+            this.levelGroup.add(beam);
+            return { beam, mat };
+        });
+
         // Fuel cells.
         const fGeo = new THREE.BoxGeometry(1, 1, 1);
         const fMat = new THREE.MeshStandardMaterial({ color: C.fixture.fuelBody, metalness: 0.6, roughness: 0.4 });
@@ -382,6 +474,11 @@ export class View {
         this.reactor.visible = true;
         this.builtFor = lv;
         this.fx.reset();
+    }
+
+    /** Rock chunks still queued for the current planet. */
+    get pendingChunks() {
+        return this.jobs.length;
     }
 
     /** Build queued rock chunks, nearest to focusY first, until budgetMs is spent (min one). */
@@ -460,7 +557,7 @@ export class View {
      * shield, tow or explosion doesn't stall on a shader compile mid-game.
      */
     async warmup() {
-        const hidden = [this.flame, this.shield, this.rodLine, this.beamLine, ...this.fx.hiddenObjects()];
+        const hidden = [this.flame, this.shield, this.rodLine, this.beamLine, this.ghost, ...this.fx.hiddenObjects()];
         const was = hidden.map((o) => o.visible);
         hidden.forEach((o) => (o.visible = true));
         this.fx.setDebrisWarm(true);
@@ -495,6 +592,11 @@ export class View {
             return true;
         }
         return false;
+    }
+
+    /** Best-run ghost pose for this frame (null hides it). */
+    setGhost(p: { x: number; y: number; a: number } | null) {
+        this.ghostPose = p;
     }
 
     /** Sparks: see Effects.burst. */
@@ -556,6 +658,42 @@ export class View {
             this.fuel[k].visible = f.amount > 0;
             this.fuel[k].scale.y = 0.3 + 0.7 * (f.amount / 35);
         });
+        const padGlow = g.onPad ? 1.6 + 0.4 * Math.sin(this.time * 10) : 1;
+        this.pads.forEach((m) => {
+            const [r, gg, b] = C.fixture.pad;
+            (m.material as THREE.MeshBasicMaterial).color.setRGB(r * padGlow, gg * padGlow, b * padGlow);
+        });
+        this.beacons.forEach((m, k) => {
+            m.rotation.y = this.time * 1.5 + k;
+            const c = k <= g.checkpoint ? C.fixture.checkpointOn : C.fixture.checkpoint;
+            (m.material as THREE.MeshBasicMaterial).color.setRGB(c[0], c[1], c[2]);
+        });
+        lv.mines.forEach((m, k) => {
+            const grp = this.mines[k];
+            grp.visible = m.alive;
+            if (!m.alive) return;
+            grp.position.set(m.x, m.y, 0);
+            grp.rotation.z = this.time * 0.8 + k;
+            grp.rotation.y = this.time * 0.5;
+            // Eye pulses faster when the mine is hunting (moved off its home spot).
+            const hunting = Math.hypot(m.x - m.hx, m.y - m.hy) > 0.3;
+            const e = grp.getObjectByName("eye") as THREE.Mesh;
+            const v = 0.5 + 0.5 * Math.sin(this.time * (hunting ? 14 : 3));
+            const [r, gg, b] = C.fixture.mineEye;
+            (e.material as THREE.MeshBasicMaterial).color.setRGB(r * (0.3 + v), gg * (0.3 + v), b * (0.3 + v));
+        });
+        lv.gates.forEach((gt, k) => {
+            const { beam, mat } = this.gates[k];
+            const on = gateOn(gt, g.time);
+            const soon = !on && gateIn(gt, g.time) < GATE_WARN;
+            beam.visible = on || (soon && Math.floor(this.time * 30) % 2 === 0);
+            mat.opacity = on ? 1 : 0.35;
+        });
+        this.ghost.visible = !!this.ghostPose;
+        if (this.ghostPose) {
+            this.ghost.position.set(this.ghostPose.x, this.ghostPose.y, 0.3);
+            this.ghost.rotation.z = this.ghostPose.a;
+        }
 
         const crit = g.critical >= 0;
         const pulse = crit

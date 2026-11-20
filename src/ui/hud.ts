@@ -18,11 +18,10 @@
  *     shows up as jank on phones; the cache makes a steady HUD free.
  *   - #hud is pointer-events: none, so it never intercepts touches meant for the game.
  *
- * See also: main.ts, game.ts, index.html (#hud), styles.css; DESIGN.md "10. UI".
+ * See also: main.ts, core/game.ts, index.html (#hud), styles.css; DESIGN.md "12. UI".
  */
-import { CFG, type Game } from "./game";
+import { CFG, type Game } from "../core/game";
 
-const el = (id: string) => document.getElementById(id)!;
 const score = el("h-score"),
     lives = el("h-lives"),
     level = el("h-level"),
@@ -32,6 +31,10 @@ const score = el("h-score"),
     msg = el("h-msg");
 
 const cache = new Map<string, string>();
+function el(id: string) {
+    return document.getElementById(id)!;
+}
+
 function put(key: string, v: string, write: (v: string) => void) {
     if (cache.get(key) === v) return;
     cache.set(key, v);

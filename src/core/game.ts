@@ -1,46 +1,47 @@
 /**
- * Game — rules, physics and state for one play session (ship, pod, bullets, reactor, score).
+ * Game — rules, physics and state for one play session: ship, pod, bullets, threats, reactor,
+ * checkpoints, score and stats.
  *
  * Purpose
- *   The simulation. The ship rotates, thrusts against gravity and keeps its momentum. Holding
- *   SHIELD both protects from bullets and works the tractor beam: near the pod it latches the
- *   pod onto a rigid tow rod, near a fuel cell it drains fuel. Turrets shoot when they can see
- *   the ship. Shooting the reactor stuns the turrets; enough hits make it go critical and start
- *   a countdown. Leaving through the sky with the pod (or with the reactor critical) completes
- *   the planet and loads the next.
+ *   The simulation. The ship rotates, thrusts against gravity (which may pull up on reversed
+ *   planets) and keeps its momentum. SHIELD protects from bullets and works the tractor beam:
+ *   near the pod it latches it onto a rigid tow rod, near a fuel cell it drains fuel. Turrets
+ *   (some leading their shots), homing mines and cycling laser gates defend the planet.
+ *   Shooting the reactor stuns the turrets; enough hits make it go critical. Leaving through the
+ *   sky with the pod (or with the reactor critical) completes the planet.
  *
  * Operations
  *   - update(dt, input): accumulates real time (capped 0.25 s) and runs fixed 1/120 s step()s.
- *   - step(): phase timers (dead → respawn / reload, complete → next planet, over) → flight
- *     (rotate, fuel burn, thrust, gravity, drag) → pod integration + rod() → tractor beam →
- *     firing → turrets → reactor countdown → collisions (crash or land) → exit check.
- *     moveBullets() runs every step, even in the pause phases, so shots finish naturally.
- *   - rod(a, ma, b, mb, len): rigid distance constraint, position + velocity projection
- *     weighted by inverse mass (exported for the check).
- *   - hull(x, y, a): the six world-space hull points used for rock collision.
- *   - Death: crash (hull point in rock, unless a slow, upright, rear-only touchdown, which
- *     lands), attached pod in rock, turret/reactor contact, unshielded bullet hit, or the
- *     reactor blowing while still below. Respawn is at the entrance; if the reactor was
- *     critical the level is rebuilt.
+ *   - step(): phase timers → flight (rotate, auto-level assist, fuel, thrust, gravity, drag) →
+ *     pod + rod() → tractor beam → firing → checkpoints → mines → turrets → reactor countdown →
+ *     collisions (land / crash, pad refuel, laser gates) → exit. moveBullets() runs every step,
+ *     compacting survivors in place.
+ *   - Landing is gravity-relative: slow, nose away from gravity, moving toward the surface, only
+ *     the rear touching. Resting on a pad refuels (CFG.padRefuel).
+ *   - On completion: result (bonuses, time vs par, 0–3 stars) and run stats update; the phase
+ *     stays 'complete' until next() loads the following planet (main.ts's summary card).
+ *   - Death: crash, pod in rock, turret / reactor contact, unshielded bullet or mine, an active
+ *     laser gate, or the reactor blowing while still below. Respawn at the last checkpoint
+ *     passed (else the entrance); a critical reactor rebuilds the planet.
+ *   - rod(a, ma, b, mb, len) (rigid constraint, position + velocity projection by inverse mass)
+ *     and hull(x, y, a) (six collision points) are exported for checks.
  *
  * Usage
- *   const g = new Game(1); g.onEvent = (e, x, y) => ...; each frame g.update(dt, input), then
- *   read g.ship, g.pod, g.bullets, g.level, g.phase, g.fuel, g.score... for drawing. main.ts
- *   owns the instance; view.ts only reads it.
+ *   const g = new Game(n, seed?); g.onEvent = (e, x, y) => ...; g.assist = options.assist; each
+ *   frame g.update(dt, input), then read ship, pod, bullets, level, phase, time, checkpoint,
+ *   onPad, fuel, score, result, stats. main.ts owns it; view / hud / minimap only read it.
  *
  * Highlights
  *   - Pure: no three.js or DOM; scripts/check.ts drives it headless.
- *   - Input is five booleans (Input); devices are main.ts's problem.
- *   - Effects leave only through onEvent(GameEvent, x, y): one callback, routed by main.ts to
- *     sound and particles.
- *   - The rod length is the distance at the moment of grabbing (min 2), so latching never yanks
- *     a resting pod into the floor.
- *   - All feel constants are in CFG.
+ *   - Input is five booleans; devices are player/input.ts's problem. Effects leave only through
+ *     onEvent(GameEvent, x, y).
+ *   - The rod length is the grab distance (min 2), so latching never yanks a resting pod into
+ *     the floor. All feel constants are in CFG; per-planet behaviour comes from level.diff.
  *
- * See also: level.ts, main.ts, view.ts, scripts/check.ts; DESIGN.md "6. Game rules and physics"
- * and "15. Tuning reference".
+ * See also: world/level.ts, main.ts, render/view.ts, scripts/check.ts; DESIGN.md "6. Game rules
+ * and physics", "17. Tuning reference".
  */
-import { generateLevel, lineOfSight, solidAt, type Level, type Pt } from "./level";
+import { gateOn, generateLevel, lineOfSight, solidAt, type Level, type Pt } from "../world/level";
 
 export interface Input {
     left: boolean;
@@ -72,8 +73,46 @@ export type GameEvent =
     | "critical"
     | "complete"
     | "extra"
+    | "checkpoint"
+    | "pad"
     | "gameover";
 export type Phase = "play" | "dead" | "complete" | "over";
+
+/** Player assists (Options): gentler game speed, auto-levelling near the ground, free shield. */
+export interface Assist {
+    slow: boolean; // main.ts runs the game at 75% speed
+    autoLevel: boolean;
+    freeShield: boolean;
+}
+export const NO_ASSIST: Assist = { slow: false, autoLevel: false, freeShield: false };
+
+/** One planet's outcome, for the summary card and medals. */
+export interface Result {
+    n: number;
+    name: string;
+    time: number;
+    par: number;
+    pod: boolean;
+    reactor: boolean;
+    podBonus: number;
+    reactorBonus: number;
+    timeBonus: number;
+    total: number;
+    /** 0..3: pod recovered, reactor destroyed, under par time. */
+    stars: number;
+    deaths: number;
+}
+
+/** Whole-run totals, for the game-over card. */
+export interface RunStats {
+    planets: number;
+    pods: number;
+    reactors: number;
+    turrets: number;
+    mines: number;
+    deaths: number;
+    time: number;
+}
 
 export const CFG = {
     thrust: 15,
@@ -89,6 +128,10 @@ export const CFG = {
     reload: 0.17,
     reactorTime: 10,
     stun: 4,
+    padRefuel: 15, // fuel per second while landed on a pad
+    checkpointReach: 5, // how close a switchback must be passed to count
+    mineSight: 12,
+    mineSpeed: 2.4,
 };
 const STEP = 1 / 120;
 
@@ -152,6 +195,18 @@ export class Game {
     message = "";
     messageTime = 0;
     onEvent: (e: GameEvent, x: number, y: number) => void = () => {};
+    assist: Assist = NO_ASSIST;
+    /** Seconds since this planet loaded (drives gates, ghosts, the time medal). */
+    time = 0;
+    /** Index into level.checkpoints of the last one passed (-1 = none: respawn at the start). */
+    checkpoint = -1;
+    /** Landed on a pad this step (for the pad glow). */
+    onPad = false;
+    result: Result | null = null;
+    stats: RunStats = { planets: 0, pods: 0, reactors: 0, turrets: 0, mines: 0, deaths: 0, time: 0 };
+    /** Layout seed override (daily planet); undefined = the planet's own seed. */
+    seed: number | undefined;
+    private deaths = 0;
     private reload = 0;
     private acc = 0;
     private nextExtra = 10000;
@@ -159,23 +214,34 @@ export class Game {
     private lastAlarm = 0;
     private nagTime = 0;
 
-    constructor(levelNo = 1) {
+    constructor(levelNo = 1, seed?: number) {
+        this.seed = seed;
         this.load(levelNo);
     }
 
     load(n: number) {
         this.levelNo = n;
-        this.level = generateLevel(n);
+        this.level = generateLevel(n, { seed: this.seed });
+        this.time = 0;
+        this.checkpoint = -1;
+        this.deaths = 0;
+        this.result = null;
         this.reactorHp = this.level.reactorHp;
         this.critical = -1;
         this.stun = 0;
         this.pod = { ...this.level.pod, vx: 0, vy: 0, attached: false, len: CFG.rodLen };
         this.respawn();
-        this.say(`Planet ${n}: ${this.level.name} — gravity ${this.level.gravity.toFixed(1)}`, 3);
+        // The arrival title is main.ts's intro card (menu.ts showIntro).
+    }
+
+    /** After a completed planet: load the next one (main.ts calls this from the summary card). */
+    next() {
+        if (this.phase === "complete") this.load(this.levelNo + 1);
     }
 
     respawn() {
-        const s = this.level.start;
+        const cp = this.level.checkpoints[this.checkpoint];
+        const s = cp ?? this.level.start;
         this.ship = { x: s.x, y: s.y, vx: 0, vy: 0, a: 0 };
         if (this.pod.attached) this.pod = { ...this.level.pod, vx: 0, vy: 0, attached: false, len: CFG.rodLen };
         this.fuel = Math.max(this.fuel, 40);
@@ -215,6 +281,8 @@ export class Game {
         this.emit("bigBoom", this.ship);
         if (this.pod.attached) this.emit("boom", this.pod);
         this.lives--;
+        this.deaths++;
+        this.stats.deaths++;
         this.phase = "dead";
         this.phaseTimer = 2.2;
         this.thrusting = this.shielding = false;
@@ -229,9 +297,9 @@ export class Game {
         this.messageTime -= h;
         this.moveBullets(h);
 
+        if (this.phase === "dead") this.time += h;
         if (this.phase !== "play") {
-            if (this.phase === "over" || (this.phaseTimer -= h) > 0) return;
-            if (this.phase === "complete") return this.load(this.levelNo + 1);
+            if (this.phase === "over" || this.phase === "complete" || (this.phaseTimer -= h) > 0) return;
             if (this.lives <= 0) {
                 this.phase = "over";
                 this.emit("gameover", s);
@@ -244,15 +312,24 @@ export class Game {
             return this.respawn();
         }
 
+        this.time += h;
+        this.stats.time += h;
+        // "Down" is the way gravity pulls: -1 on reversed-gravity planets. Upright = nose away from it.
+        const down = lv.gravity >= 0 ? 1 : -1;
+        const upright = down > 0 ? 0 : Math.PI;
+
         // Flight.
         if (inp.left) s.a += CFG.turn * h;
         if (inp.right) s.a -= CFG.turn * h;
+        if (this.assist.autoLevel && !inp.left && !inp.right && Math.hypot(s.vx, s.vy) < 6) {
+            // Ease upright when rock is close below, so touchdowns are forgiving.
+            if (solidAt(lv, s.x, s.y - 3 * down) || solidAt(lv, s.x, s.y - 2 * down))
+                s.a = upright + wrap(s.a - upright) * (1 - 3 * h);
+        }
         this.thrusting = inp.thrust && this.fuel > 0;
-        this.shielding = inp.shield && this.fuel > 0;
-        this.fuel = Math.max(
-            0,
-            this.fuel - ((this.thrusting ? CFG.thrustBurn : 0) + (this.shielding ? CFG.shieldBurn : 0)) * h
-        );
+        this.shielding = inp.shield && (this.fuel > 0 || this.assist.freeShield);
+        const shieldCost = this.shielding && !this.assist.freeShield ? CFG.shieldBurn : 0;
+        this.fuel = Math.max(0, this.fuel - ((this.thrusting ? CFG.thrustBurn : 0) + shieldCost) * h);
         const t = this.thrusting ? CFG.thrust : 0;
         s.vx += -Math.sin(s.a) * t * h;
         s.vy += (Math.cos(s.a) * t - lv.gravity) * h;
@@ -311,6 +388,44 @@ export class Game {
             this.emit("shoot", s);
         }
 
+        // Checkpoints: passing a lower switchback makes it the respawn point.
+        for (let k = this.checkpoint + 1; k < lv.checkpoints.length; k++)
+            if (dist(s, lv.checkpoints[k]) < CFG.checkpointReach) {
+                this.checkpoint = k;
+                this.say("Checkpoint", 1.5);
+                this.emit("checkpoint", lv.checkpoints[k]);
+            }
+
+        // Mines: home in on a ship they can see, drift home otherwise; never move into rock.
+        for (const m of lv.mines) {
+            if (!m.alive) continue;
+            const d = dist(m, s);
+            let tx = m.hx,
+                ty = m.hy,
+                sp = 1;
+            if (d < CFG.mineSight && lineOfSight(lv, m, s)) {
+                tx = s.x;
+                ty = s.y;
+                sp = CFG.mineSpeed * (1 + lv.diff.t);
+            }
+            const dd = Math.hypot(tx - m.x, ty - m.y);
+            if (dd > 0.05) {
+                const nx = m.x + ((tx - m.x) / dd) * sp * h,
+                    ny = m.y + ((ty - m.y) / dd) * sp * h;
+                if (!solidAt(lv, nx, ny)) {
+                    m.x = nx;
+                    m.y = ny;
+                }
+            }
+            if (d < 1.1) {
+                m.alive = false;
+                this.emit("boom", m);
+                if (!this.shielding) return this.die();
+                this.stats.mines++;
+                this.addScore(200);
+            }
+        }
+
         // Turrets.
         this.stun -= h;
         if (this.stun <= 0) {
@@ -321,8 +436,11 @@ export class Game {
                     dy = s.y - tu.y;
                 const d = Math.hypot(dx, dy);
                 if (d > lv.diff.turretRange || (tu.up ? dy < -0.5 : dy > 0.5) || !lineOfSight(lv, tu, s)) continue;
-                const ang = Math.atan2(dy, dx) + (Math.random() - 0.5) * 2 * lv.diff.aimSpread;
                 const sp = lv.diff.bulletSpeed;
+                // Leading turrets aim where the ship will be when the shot arrives.
+                const lead = tu.lead ? d / sp : 0;
+                const ang =
+                    Math.atan2(dy + s.vy * lead, dx + s.vx * lead) + (Math.random() - 0.5) * 2 * lv.diff.aimSpread;
                 this.bullets.push({
                     x: tu.x + Math.cos(ang) * 0.8,
                     y: tu.y + Math.sin(ang) * 0.8,
@@ -351,17 +469,36 @@ export class Game {
             }
         }
 
-        // Collisions: ship and pod against rock and fixtures.
+        // Collisions: ship and pod against rock and fixtures. A landing is a slow touchdown with
+        // the nose away from gravity, moving toward the surface, and only the rear touching.
         const pts = hull(s.x, s.y, s.a);
         const hits = pts.map(([x, y]) => solidAt(lv, x, y));
+        const wasOnPad = this.onPad;
+        this.onPad = false;
         if (hits.some(Boolean)) {
-            const gentle = Math.hypot(s.vx, s.vy) < 5 && Math.abs(wrap(s.a)) < 0.45 && s.vy <= 0.5;
+            const gentle = Math.hypot(s.vx, s.vy) < 5 && Math.abs(wrap(s.a - upright)) < 0.45 && s.vy * down <= 0.5;
             if (!gentle || hits[0] || hits[1] || hits[2]) return this.die();
-            for (let k = 0; k < 60 && hull(s.x, s.y, s.a).some(([x, y]) => solidAt(lv, x, y)); k++) s.y += 0.02;
-            if (s.vy < -1) this.emit("land", s);
+            for (let k = 0; k < 60 && hull(s.x, s.y, s.a).some(([x, y]) => solidAt(lv, x, y)); k++) s.y += 0.02 * down;
+            if (s.vy * down < -1) this.emit("land", s);
             s.vy = 0;
             s.vx *= 0.9;
-            s.a *= 0.92;
+            s.a = upright + wrap(s.a - upright) * 0.92;
+        }
+        // Landing pads refuel a ship resting on them. "Resting" = slow and within a hull height of
+        // the pad surface: a landed ship only touches rock every few steps (it's nudged clear,
+        // then gravity pulls it back), so contact alone would refuel in stutters.
+        if (down > 0 && Math.hypot(s.vx, s.vy) < 1.5)
+            for (const p of lv.pads)
+                if (Math.abs(s.x - p.x) < 2 && s.y - p.y > 0 && s.y - p.y < 1.2) {
+                    this.onPad = true;
+                    this.fuel = Math.min(CFG.fuelMax, this.fuel + CFG.padRefuel * h);
+                    if (!wasOnPad) this.emit("pad", p);
+                }
+        // Laser gates: an active beam destroys whatever crosses it (shields don't help).
+        for (const g of lv.gates) {
+            if (!gateOn(g, this.time)) continue;
+            const crosses = (x: number, y: number) => Math.abs(y - g.y) < 0.35 && x > g.x0 && x < g.x1;
+            if (pts.some(([x, y]) => crosses(x, y)) || (pod.attached && crosses(pod.x, pod.y))) return this.die();
         }
         for (const tu of lv.turrets) if (tu.alive && dist(s, tu) < 1.3) return this.die();
         if (dist(s, lv.reactor) < 2.4) return this.die();
@@ -375,17 +512,31 @@ export class Game {
         // Exit through the sky.
         if (s.y > lv.exitY) {
             if (pod.attached || this.critical >= 0) {
-                let bonus = 0;
-                if (pod.attached) bonus += 4000 + 500 * lv.n;
-                if (this.critical >= 0) bonus += 3000 + 500 * lv.n;
-                this.addScore(bonus);
-                this.say(
-                    `${pod.attached ? "Pod recovered" : "Mission complete"}${this.critical >= 0 ? " — planet destroyed" : ""}  +${bonus}`,
-                    3
-                );
-                if (this.critical >= 0) this.emit("bigBoom", lv.reactor);
+                const reactor = this.critical >= 0;
+                const podBonus = pod.attached ? 4000 + 500 * lv.n : 0;
+                const reactorBonus = reactor ? 3000 + 500 * lv.n : 0;
+                const timeBonus = Math.max(0, Math.round((lv.par - this.time) * 50));
+                const total = podBonus + reactorBonus + timeBonus;
+                this.addScore(total);
+                this.result = {
+                    n: lv.n,
+                    name: lv.name,
+                    time: this.time,
+                    par: lv.par,
+                    pod: pod.attached,
+                    reactor,
+                    podBonus,
+                    reactorBonus,
+                    timeBonus,
+                    total,
+                    stars: (pod.attached ? 1 : 0) + (reactor ? 1 : 0) + (this.time <= lv.par ? 1 : 0),
+                    deaths: this.deaths,
+                };
+                this.stats.planets++;
+                if (pod.attached) this.stats.pods++;
+                if (reactor) this.stats.reactors++;
+                if (reactor) this.emit("bigBoom", lv.reactor);
                 this.phase = "complete";
-                this.phaseTimer = 3.2;
                 this.critical = -1;
                 this.emit("complete", s);
             } else if (s.y > lv.exitY + 2) {
@@ -418,8 +569,17 @@ export class Game {
             for (const tu of lv.turrets)
                 if (tu.alive && dist(b, tu) < 0.9) {
                     tu.alive = false;
+                    this.stats.turrets++;
                     this.addScore(750);
                     this.emit("boom", tu);
+                    return false;
+                }
+            for (const m of lv.mines)
+                if (m.alive && dist(b, m) < 0.8) {
+                    m.alive = false;
+                    this.stats.mines++;
+                    this.addScore(200);
+                    this.emit("boom", m);
                     return false;
                 }
             for (const f of lv.fuel)

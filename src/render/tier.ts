@@ -35,7 +35,7 @@
  *     the GPU actually used. iPadOS (desktop "Macintosh" UA) is detected through maxTouchPoints.
  *   - classifyGpu is asserted against real renderer strings in scripts/check.ts.
  *
- * See also: view.ts, main.ts (governor), scripts/check.ts; DESIGN.md "8. Quality tiers".
+ * See also: render/view.ts, main.ts (governor), scripts/check.ts; DESIGN.md "10. Quality tiers".
  */
 export type Tier = "high" | "mobile-high" | "mid" | "low";
 
@@ -134,9 +134,11 @@ export function classifyGpu(p: GpuProbe): Tier {
     return p.cores >= 8 ? "mid" : "low";
 }
 
-export function detectTier(): Tier | "none" {
+/** `?tier=` wins, then the Options override, then the GPU probe. */
+export function detectTier(preferred?: Tier): Tier | "none" {
     const forced = new URLSearchParams(location.search).get("tier");
     if (forced && forced in TIER_SETTINGS) return forced as Tier;
+    if (preferred && preferred in TIER_SETTINGS) return preferred;
     let renderer = "";
     try {
         const gl = document.createElement("canvas").getContext("webgl2", { powerPreference: "high-performance" });

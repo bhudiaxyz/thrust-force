@@ -20,7 +20,7 @@
  *   - Gameplay-time randomness (turret aim jitter, particles) uses Math.random() on purpose;
  *     only content generation needs to be reproducible.
  *
- * See also: level.ts, rock.ts, names.ts.
+ * See also: world/level.ts, render/rock.ts, world/names.ts.
  */
 export function rng(seed: number): () => number {
     let a = seed >>> 0;

@@ -21,9 +21,9 @@
  *     names at the end (the generator then starts later).
  *   - scripts/check.ts asserts the 50 are unique and every name is a single capitalised word.
  *
- * See also: level.ts, game.ts (arrival message), main.ts (HUD, pause); DESIGN.md "5".
+ * See also: world/level.ts, core/game.ts (arrival message), main.ts (HUD, pause); DESIGN.md "5".
  */
-import { rng } from "./random";
+import { rng } from "../core/random";
 
 export const PLANET_NAMES = [
     "Avren",

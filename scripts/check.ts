@@ -1,48 +1,45 @@
 /**
- * check — headless asserts for the pure modules (level, difficulty, game rules, tiers, blocks,
- * themes, names).
+ * check — headless asserts for the pure modules: level, difficulty, game rules, tiers, blocks,
+ * themes, names, and the gameplay additions (checkpoints, pads, threats, reverse gravity, daily).
  *
  * Purpose
  *   The smallest set of checks that fail if the core logic breaks, runnable without a browser.
  *
  * Operations
- *   1. Planets 1..50: a flood fill that only enters cells with a full 3x3 of air (ship-sized)
- *      reaches the pod and reactor from the start; turrets and fuel cells sit in air; at least
- *      two turrets; generation is deterministic.
- *   2. rod() holds its length to 1e-9 over 2000 steps while both bodies fall and one
- *      accelerates sideways.
+ *   1. Planets 1..50: a ship-sized (3x3 air) flood fill reaches the pod and reactor from the
+ *      start; turrets and fuel sit in air; at least two turrets; generation is deterministic.
+ *   2. rod() holds its length to 1e-9 over 2000 steps of falling and sideways thrust.
  *   3. A tilted idle ship falls, crashes once, loses a life and respawns.
- *   4. Grabbing the pod from a hover closer than the rod length does not crash and lifts it;
- *      carrying it above exitY completes the planet, pays the bonus and loads planet 2.
- *   5. Real GPU renderer strings (desktops, laptops, phones and tablets up to ~7 years old)
- *      classify into the expected tiers.
- *   6. Block types: all eight appear; topsoil only on the surface skin; ore / crystal only on
- *      air-facing cells.
- *   7. Difficulty never eases from one planet to the next, saturates at MAX_DIFFICULTY_AT, and
- *      planet 1 is roomy.
- *   8. Themes: all names distinct within a cycle, cycling wraps, evenGlow lands every neon on
- *      NEON_LUMA.
- *   9. Planet names: 50 unique hand-picked names, every name one capitalised word, stable.
+ *   4. Grabbing the pod from closer than the rod length doesn't crash and lifts it; carrying it
+ *      above exitY completes the planet with a result, waits, and next() loads planet 2.
+ *   5. GPU renderer strings (current and ~7-year-old devices) classify into the expected tiers.
+ *   6. Block types: all eight appear; topsoil only on the surface; ore / crystal only exposed.
+ *   7. Difficulty never eases planet to planet (including mines, gates, lead aim), saturates at
+ *      MAX_DIFFICULTY_AT, and planet 1 is roomy.
+ *   8. Themes distinct within a cycle and cycling; evenGlow lands on NEON_LUMA.
+ *   9. Planet names: 50 unique hand-picked, every name one capitalised word, stable.
+ *  10. Checkpoints become the respawn point; resting on a pad refuels; mines from planet 8, gates
+ *      from 15, no leading turrets before 20, reversed gravity on 10; an upside-down ceiling
+ *      landing works on a reversed planet; a daily seed changes the layout deterministically.
  *
  * Usage
  *   npm run check  (node --import ./scripts/ts-resolve.mjs scripts/check.ts). Prints
  *   "check: ok" or throws an AssertionError naming the failing case.
  *
  * Highlights
- *   - Runs on Node's native TypeScript support; ts-resolve.mjs adds .ts to the extensionless
- *     src/ imports. rock.ts imports three.js, which loads fine under Node (no DOM touched).
- *   - The browser-side counterpart is scripts/smoke.py (Playwright, desktop + touch, idle).
+ *   - Runs on Node's native TypeScript support; ts-resolve.mjs adds .ts to extensionless imports.
+ *   - The browser-side counterpart is scripts/smoke.py (menus, desktop, phone, landscape).
  *
- * See also: src/level.ts, src/game.ts, src/tier.ts, src/rock.ts, src/palette.ts, src/names.ts,
- * scripts/smoke.py; DESIGN.md "13. Checks and tooling".
+ * See also: src/world/level.ts, src/core/game.ts, src/render/tier.ts, src/render/rock.ts,
+ * src/core/palette.ts, src/world/names.ts, scripts/smoke.py; DESIGN.md "15. Checks and tooling".
  */
 import assert from "node:assert/strict";
-import { difficulty, generateLevel, MAX_DIFFICULTY_AT, solidAt, type Difficulty } from "../src/level";
-import { evenGlow, NEON_LUMA, PLANET_THEMES, themeFor } from "../src/palette";
-import { PLANET_NAMES, planetName } from "../src/names";
-import { Game, rod, type Input } from "../src/game";
-import { classifyGpu } from "../src/tier";
-import { BLOCK, blockAt } from "../src/rock";
+import { difficulty, generateLevel, MAX_DIFFICULTY_AT, solidAt, type Difficulty } from "../src/world/level";
+import { evenGlow, NEON_LUMA, PLANET_THEMES, themeFor } from "../src/core/palette";
+import { PLANET_NAMES, planetName } from "../src/world/names";
+import { Game, rod, type Input } from "../src/core/game";
+import { classifyGpu } from "../src/render/tier";
+import { BLOCK, blockAt } from "../src/render/rock";
 
 for (let n = 1; n <= 50; n++) {
     const lv = generateLevel(n);
@@ -132,7 +129,10 @@ for (let n = 1; n <= 50; n++) {
     g.update(1 / 60, grab);
     assert.equal(g.phase, "complete");
     assert.ok(g.score >= 4500, `bonus not paid: ${g.score}`);
+    assert.ok(g.result && g.result.pod && g.result.stars >= 1, "result not recorded");
     for (let i = 0; i < 120 * 4; i++) g.update(1 / 120, grab);
+    assert.equal(g.levelNo, 1, "should wait on the summary, not advance by itself");
+    g.next();
     assert.equal(g.levelNo, 2, "next planet not loaded");
 }
 
@@ -190,6 +190,9 @@ for (let n = 1; n <= 50; n++) {
 {
     // Difficulty only ever gets harder planet to planet, saturating at MAX_DIFFICULTY_AT.
     const harder: (keyof Difficulty)[] = [
+        "mines",
+        "gates",
+        "leadAim",
         "gravity",
         "depth",
         "turns",
@@ -226,6 +229,66 @@ for (let n = 1; n <= 50; n++) {
     assert.equal(planetName(1), "Avren");
     assert.equal(planetName(77), planetName(77), "generated names must be stable");
     assert.equal(generateLevel(3).name, planetName(3));
+}
+
+{
+    // Checkpoints: passing one makes it the respawn point.
+    const g = new Game(5);
+    const idle: Input = { left: false, right: false, thrust: false, fire: false, shield: false };
+    g.level.turrets.length = 0;
+    g.level.mines.length = 0;
+    const cp = g.level.checkpoints[1];
+    assert.ok(cp, "planet 5 should have checkpoints");
+    Object.assign(g.ship, { x: cp.x, y: cp.y, vx: 0, vy: 0, a: 1.4 });
+    g.update(1 / 120, idle);
+    assert.equal(g.checkpoint, 1, "checkpoint not taken");
+    for (let i = 0; i < 120 * 20 && g.phase === "play"; i++) g.update(1 / 120, idle); // tilted: crashes
+    for (let i = 0; i < 120 * 3 && g.phase !== "play"; i++) g.update(1 / 120, idle);
+    assert.ok(Math.hypot(g.ship.x - cp.x, g.ship.y - cp.y) < 3, "should respawn at the checkpoint");
+
+    // Pads: landing on one refuels.
+    const pg = new Game(3);
+    pg.level.turrets.length = 0;
+    const pad = pg.level.pads[0];
+    assert.ok(pad, "planet 3 should have a pad");
+    Object.assign(pg.ship, { x: pad.x, y: pad.y + 1.2, vx: 0, vy: -1, a: 0 });
+    pg.fuel = 10;
+    for (let i = 0; i < 120 * 2; i++) pg.update(1 / 120, idle);
+    assert.equal(pg.phase, "play", "pad landing crashed");
+    assert.ok(pg.fuel > 25, `pad did not refuel: ${pg.fuel}`);
+
+    // Threats arrive gradually; reversed gravity every 10th planet.
+    assert.equal(generateLevel(7).mines.length, 0);
+    assert.ok(generateLevel(8).mines.length > 0, "mines from planet 8");
+    assert.equal(generateLevel(14).gates.length, 0);
+    assert.ok(generateLevel(15).gates.length > 0, "gates from planet 15");
+    assert.ok(!generateLevel(19).turrets.some((t) => t.lead));
+    assert.ok(generateLevel(10).gravity < 0 && generateLevel(11).gravity > 0, "reverse gravity on planet 10");
+
+    // Reversed gravity: an upside-down slow touchdown on a ceiling lands.
+    const rg = new Game(10);
+    rg.level.turrets.length = 0;
+    rg.level.mines.length = 0;
+    const lv = rg.level;
+    let spot: { x: number; y: number } | null = null;
+    for (let y = 20; y < lv.h - 40 && !spot; y++)
+        for (let x = 10; x < lv.w - 10 && !spot; x++)
+            if (
+                [-1, 0, 1].every((d) => solidAt(lv, x + d + 0.5, y + 1.5) && !solidAt(lv, x + d + 0.5, y + 0.5)) &&
+                [-2, -1].every((d) => !solidAt(lv, x + 0.5, y + d + 0.5))
+            )
+                spot = { x: x + 0.5, y: y + 0.4 };
+    assert.ok(spot, "no ceiling found on planet 10");
+    Object.assign(rg.ship, { x: spot.x, y: spot.y - 0.5, vx: 0, vy: 1, a: Math.PI });
+    for (let i = 0; i < 120; i++) rg.update(1 / 120, idle);
+    assert.equal(rg.phase, "play", "upside-down ceiling landing should not crash");
+
+    // Daily planet: a seed changes the layout and name, deterministically.
+    const d1 = generateLevel(12, { seed: 20261120 }),
+        d2 = generateLevel(12, { seed: 20261120 });
+    assert.deepEqual(d1.grid, d2.grid);
+    assert.notDeepEqual(d1.grid, generateLevel(12).grid);
+    assert.match(d1.name, /^[A-Z][a-z]+$/);
 }
 
 console.log("check: ok");

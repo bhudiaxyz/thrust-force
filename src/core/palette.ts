@@ -37,7 +37,7 @@
  *     brightness is NEON_LUMA whatever is written here.
  *   - styles.css keeps the same values as fallbacks so the splash looks right before JS loads.
  *
- * See also: view.ts, rock.ts, minimap.ts, main.ts, styles.css; DESIGN.md "7.1 Scene and look".
+ * See also: render/view.ts, render/rock.ts, ui/minimap.ts, main.ts, styles.css; DESIGN.md "7.1 Scene and look".
  */
 
 export type RGB = [number, number, number];
@@ -79,8 +79,8 @@ export const PLANET_THEMES: PlanetTheme[] = [
     { name: "Aurora", deep: 0x081a20, top: 0x1e4a50, surf: 0x70e0b0, neon: [2.2, 0.6, 3.0], sky: 0x02080a },
 ];
 
-/** Theme for planet n: the themes in order, cycling (planet 25 = theme 1 again). */
-export const themeFor = (n: number): PlanetTheme => PLANET_THEMES[(n - 1) % PLANET_THEMES.length];
+/** Perceived brightness every theme's neon is scaled to, so yellows don't out-bloom blues. */
+export const NEON_LUMA = 1.4;
 
 export const COLORS = {
     light: {
@@ -117,6 +117,14 @@ export const COLORS = {
         reactorCoreSwing: [3.0, 1.2, 0] as RGB,
         reactorCriticalBase: [0.4, 0.1, 0.2] as RGB,
         reactorCriticalSwing: [3.0, 0, 0] as RGB,
+        pad: [0.3, 2.6, 1.6] as RGB, // landing pad glow (brighter while refuelling)
+        checkpoint: [0.5, 0.9, 1.2] as RGB, // beacon not yet passed
+        checkpointOn: [0.6, 3.0, 1.2] as RGB, // beacon passed (respawn point)
+        mineBody: 0x2a2430,
+        mineEye: [3.0, 0.2, 0.4] as RGB,
+        gate: [3.0, 0.15, 0.35] as RGB, // laser beam
+        gateEmitter: 0x40404a,
+        ghost: [0.6, 1.6, 2.4] as RGB, // best-run ghost ship (drawn translucent)
     },
     bullet: {
         player: [1.5, 2.5, 3.0] as RGB,
@@ -168,6 +176,23 @@ export const COLORS = {
         ship: "#e6f4ff",
         heading: "#66e0ff",
         view: "rgba(102, 224, 255, 0.35)",
+        pad: "#40e0a0",
+        checkpoint: "#6a8aa0",
+        checkpointOn: "#6aff9a",
+        mine: "#ff70c0",
+        gate: "#ff3050",
+        ghost: "rgba(150, 220, 255, 0.6)",
+    },
+    /** Colour-blind-safe minimap markers (Okabe–Ito based): replaces the matching minimap keys. */
+    minimapColourBlind: {
+        fuel: "#56b4e9",
+        turret: "#e69f00",
+        reactor: "#f0e442",
+        reactorCritical: "#ffffff",
+        pod: "#cc79a7",
+        mine: "#d55e00",
+        gate: "#ffffff",
+        pad: "#009e73",
     },
     ui: {
         bg: "#05060f",
@@ -182,8 +207,8 @@ export const COLORS = {
     },
 };
 
-/** Perceived brightness every theme's neon is scaled to, so yellows don't out-bloom blues. */
-export const NEON_LUMA = 1.4;
+/** Theme for planet n: the themes in order, cycling (planet 25 = theme 1 again). */
+export const themeFor = (n: number): PlanetTheme => PLANET_THEMES[(n - 1) % PLANET_THEMES.length];
 
 /** Scale an HDR colour so its luma (Rec. 709 weights) is NEON_LUMA, keeping its hue. */
 export function evenGlow(c: RGB): RGB {

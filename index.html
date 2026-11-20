@@ -73,7 +73,7 @@
                 <div class="ls-bar"><span></span></div>
                 <p class="ls-tip">Loading&hellip;</p>
                 <p class="ls-best"></p>
-                <button class="ls-enter" type="button">Click to launch</button>
+                <nav class="ls-menu" aria-label="Main menu"></nav>
                 <p class="ls-controls"></p>
             </div>
         </div>
@@ -82,10 +82,13 @@
             <div class="panel" role="dialog" aria-modal="true" aria-labelledby="pause-title">
                 <h2 id="pause-title">Paused</h2>
                 <p class="p-score"></p>
+                <dl class="p-stats"></dl>
                 <nav>
                     <button type="button" id="pause-resume"><span>Resume</span><kbd>Esc</kbd></button>
-                    <button type="button" id="pause-restart"><span>Restart</span><kbd>R</kbd></button>
+                    <button type="button" id="pause-restart"><span>Restart planet</span><kbd>R</kbd></button>
+                    <button type="button" id="pause-share"><span>Share result</span></button>
                     <button type="button" id="pause-mute"><span>Sound</span><kbd>M</kbd></button>
+                    <button type="button" id="pause-menu"><span>Main menu</span><kbd>Q</kbd></button>
                 </nav>
                 <div class="controls">
                     <h3>Controls</h3>
@@ -98,6 +101,23 @@
                 </div>
             </div>
         </div>
+        <div id="sheet">
+            <div class="panel" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+                <h2 id="sheet-title"></h2>
+                <div class="sheet-body"></div>
+                <nav class="sheet-actions"></nav>
+            </div>
+        </div>
+
+        <div id="intro" aria-live="polite">
+            <canvas aria-hidden="true"></canvas>
+            <div>
+                <p id="intro-num"></p>
+                <h2 id="intro-name"></h2>
+                <ul id="intro-facts"></ul>
+            </div>
+        </div>
+
         <script type="module" src="/src/main.ts"></script>
     </body>
 </html>

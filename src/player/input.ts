@@ -14,6 +14,11 @@
  *   - Stick (#joy, left half): a nipplejs dynamic joystick. steer(shipAngle) aims absolutely:
  *     it presses left / right until the nose is within 0.06 rad of the stick direction; pushes
  *     under 25% are ignored; over 75% also thrusts, so one thumb flies the ship.
+ *   - Gamepads (standard mapping, polled in steer()): left stick aims absolutely like the touch
+ *     stick (pushed past the thrust threshold also thrusts); d-pad left / right rotate; A or RT
+ *     thrust; X or RB fire; B or LT shield. Start → onPadButton("pause"); in menus the d-pad and
+ *     A → onPadButton("up" | "down" | "select"), B → "back" (edge-triggered).
+ *   - setStickThrust(v): the push (0.6..0.95) at which the touch / pad stick also thrusts.
  *   - clearInput(): releases everything (window blur, so nothing sticks after alt-tab).
  *   - HELP: [key, action] rows for this device (KEY_HELP or TOUCH_HELP by (pointer: coarse)),
  *     rendered into the splash hint line and the pause dialog by main.ts.
@@ -28,11 +33,11 @@
  *   - Keep KEY_HELP / TOUCH_HELP in step with KEYS, main.ts's command keys and index.html's
  *     #touch buttons.
  *
- * See also: main.ts, game.ts (Input), index.html (#joy, #touch); DESIGN.md "9. Input".
+ * See also: main.ts, core/game.ts (Input), index.html (#joy, #touch); DESIGN.md "11. Input".
  */
 import nipplejs from "nipplejs";
-import type { Input } from "./game";
-import { COLORS } from "./palette";
+import type { Input } from "../core/game";
+import { COLORS } from "../core/palette";
 
 export const isTouch = matchMedia("(pointer: coarse)").matches;
 
@@ -76,7 +81,20 @@ const TOUCH_HELP = [
 export const HELP = isTouch ? TOUCH_HELP : KEY_HELP;
 
 const STICK = 120; // nipplejs size in px
+/** Last frame's button states per gamepad, for edge detection. */
+const padPrev = new Map<number, boolean[]>();
 let stick: { x: number; y: number; push: number } | null = null;
+let thrustAt = 0.75;
+/** Called on gamepad button presses that aren't flight controls (main.ts handles them). */
+export let onPadButton: (b: "pause" | "up" | "down" | "select" | "back") => void = () => {};
+
+export function setStickThrust(v: number) {
+    thrustAt = Math.min(0.95, Math.max(0.6, v));
+}
+
+export function setPadHandler(fn: typeof onPadButton) {
+    onPadButton = fn;
+}
 
 export function setupInput() {
     addEventListener("keydown", (e) => {
@@ -124,14 +142,46 @@ export function clearInput() {
     stick = null;
 }
 
-/** Held keys / buttons OR'd with the stick's left / right / thrust for a ship at angle a. */
-export function steer(a: number): Input {
-    const out = { ...held };
-    if (!stick || stick.push < 0.25) return out;
-    const target = Math.atan2(-stick.x, stick.y);
+/** Steer toward stick direction (x right, y up) for a ship at angle a; push 0..1. */
+function aim(out: Input, a: number, x: number, y: number, push: number) {
+    if (push < 0.25) return;
+    const target = Math.atan2(-x, y);
     const diff = Math.atan2(Math.sin(target - a), Math.cos(target - a));
     out.left ||= diff > 0.06;
     out.right ||= diff < -0.06;
-    out.thrust ||= stick.push > 0.75;
+    out.thrust ||= push > thrustAt;
+}
+
+/** Edge-detected gamepad buttons; flight controls are OR'd into out. */
+export function pollPads(out?: Input, a = 0) {
+    const pads = navigator.getGamepads?.() ?? [];
+    for (const pad of pads) {
+        if (!pad) continue;
+        const b = pad.buttons.map((x) => x.pressed || x.value > 0.5);
+        const prev = padPrev.get(pad.index) ?? [];
+        const edge = (i: number) => b[i] && !prev[i];
+        if (edge(9)) onPadButton("pause");
+        if (edge(12)) onPadButton("up");
+        if (edge(13)) onPadButton("down");
+        if (edge(0)) onPadButton("select");
+        if (edge(1)) onPadButton("back");
+        padPrev.set(pad.index, b);
+        if (!out) continue;
+        const x = pad.axes[0] ?? 0,
+            y = -(pad.axes[1] ?? 0);
+        aim(out, a, x, y, Math.min(1, Math.hypot(x, y)));
+        out.left ||= !!b[14];
+        out.right ||= !!b[15];
+        out.thrust ||= !!b[0] || !!b[7];
+        out.fire ||= !!b[2] || !!b[5];
+        out.shield ||= !!b[1] || !!b[6];
+    }
+}
+
+/** Held keys / buttons OR'd with the touch stick and gamepads, for a ship at angle a. */
+export function steer(a: number): Input {
+    const out = { ...held };
+    if (stick) aim(out, a, stick.x, stick.y, stick.push);
+    pollPads(out, a);
     return out;
 }

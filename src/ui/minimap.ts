@@ -12,6 +12,9 @@
  *     scaling, so it stays pixel-crisp like the voxels) and draws the markers on top: fuel
  *     (green), live turrets (red), reactor (amber, red strobe when critical), pod (amber),
  *     ship (cyan, with a heading tick) and a faint box for the camera's rough view.
+ *   - Also marks landing pads (green), checkpoints (dim; bright once passed), laser gates (red
+ *     lines), mines and the best-run ghost. setColourBlind(on) swaps in COLORS.minimapColourBlind.
+ *   - Minimap.preview(level, canvas, w, h): a static whole-planet preview for the intro card.
  *   - toggle(): collapses to / expands from the map icon button.
  *
  * Usage
@@ -25,16 +28,21 @@
  *   - Rendered at devicePixelRatio for sharp markers; the bake is scaled with smoothing off.
  *   - Hidden with the HUD before launch.
  *
- * See also: main.ts, level.ts (grid, surface), index.html (#minimap); DESIGN.md "10. UI".
+ * See also: main.ts, world/level.ts (grid, surface), index.html (#minimap); DESIGN.md "12. UI".
  */
-import type { Game } from "./game";
-import { isRock, type Level } from "./level";
-import { COLORS } from "./palette";
-
-const M = COLORS.minimap;
+import type { Game } from "../core/game";
+import { isRock, type Level } from "../world/level";
+import { COLORS } from "../core/palette";
 
 const MAX_W = 150,
     MAX_H = 210;
+
+const BASE = COLORS.minimap;
+/** Marker colours: the standard set, or with the colour-blind-safe overrides merged in. */
+let M: typeof BASE = BASE;
+export function setColourBlind(on: boolean) {
+    M = on ? { ...BASE, ...COLORS.minimapColourBlind } : BASE;
+}
 
 export class Minimap {
     private canvas: HTMLCanvasElement;
@@ -58,6 +66,8 @@ export class Minimap {
     }
 
     private last: Game | null = null;
+    /** Ghost position to mark, set by main.ts each frame (null = none). */
+    ghost: { x: number; y: number } | null = null;
 
     /**
      * Collapse to the icon only when the screen can't spare the room: the open map needs about
@@ -77,12 +87,12 @@ export class Minimap {
         if (this.last) this.draw(this.last); // so it isn't blank when opened while paused
     }
 
-    private rebake(lv: Level) {
-        this.level = lv;
+    /** Bake a level's rock / air into a 1-px-per-cell canvas. */
+    static bakeLevel(lv: Level, into: HTMLCanvasElement) {
         const { w, h } = lv;
-        this.bake.width = w;
-        this.bake.height = h;
-        const bctx = this.bake.getContext("2d")!;
+        into.width = w;
+        into.height = h;
+        const bctx = into.getContext("2d")!;
         const img = bctx.createImageData(w, h);
         const solid = (x: number, y: number) => isRock(lv, x, y);
         for (let y = 0; y < h; y++)
@@ -104,6 +114,35 @@ export class Minimap {
                 );
             }
         bctx.putImageData(img, 0, 0);
+    }
+
+    /** Draw a whole-planet preview (rock, pod, reactor, pads) into any canvas, e.g. the intro card. */
+    static preview(lv: Level, canvas: HTMLCanvasElement, cssW: number, cssH: number) {
+        const bake = document.createElement("canvas");
+        Minimap.bakeLevel(lv, bake);
+        const dpr = Math.min(devicePixelRatio || 1, 2);
+        const scale = Math.min(cssW / lv.w, cssH / lv.h);
+        canvas.style.width = `${Math.round(lv.w * scale)}px`;
+        canvas.style.height = `${Math.round(lv.h * scale)}px`;
+        canvas.width = Math.round(lv.w * scale * dpr);
+        canvas.height = Math.round(lv.h * scale * dpr);
+        const c = canvas.getContext("2d")!;
+        c.imageSmoothingEnabled = false;
+        c.drawImage(bake, 0, 0, canvas.width, canvas.height);
+        const k = scale * dpr;
+        const dot = (x: number, y: number, r: number, col: string) => {
+            c.fillStyle = col;
+            c.fillRect(x * k - r * dpr, (lv.h - y) * k - r * dpr, 2 * r * dpr, 2 * r * dpr);
+        };
+        for (const p of lv.pads) dot(p.x, p.y, 1.5, M.pad);
+        dot(lv.reactor.x, lv.reactor.y + 1, 2.5, M.reactor);
+        dot(lv.pod.x, lv.pod.y, 2, M.pod);
+    }
+
+    private rebake(lv: Level) {
+        this.level = lv;
+        const { w, h } = lv;
+        Minimap.bakeLevel(lv, this.bake);
         this.scale = Math.min(MAX_W / w, MAX_H / h);
         const cw = Math.round(w * this.scale),
             ch = Math.round(h * this.scale);
@@ -132,6 +171,12 @@ export class Minimap {
             c.fillStyle = color;
             c.fillRect(px(x) - r * this.dpr, py(y) - r * this.dpr, 2 * r * this.dpr, 2 * r * this.dpr);
         };
+        for (const p of lv.pads) dot(p.x, p.y, 1.5, M.pad);
+        lv.checkpoints.forEach((cp, i) => dot(cp.x, cp.y, 1, i <= g.checkpoint ? M.checkpointOn : M.checkpoint));
+        c.fillStyle = M.gate;
+        for (const gt of lv.gates) c.fillRect(px(gt.x0), py(gt.y) - 0.5 * this.dpr, (gt.x1 - gt.x0) * k, this.dpr);
+        for (const m of lv.mines) if (m.alive) dot(m.x, m.y, 1.2, M.mine);
+        if (this.ghost) dot(this.ghost.x, this.ghost.y, 1.5, M.ghost);
         for (const f of lv.fuel) if (f.amount > 0) dot(f.x, f.y, 1.5, M.fuel);
         for (const t of lv.turrets) if (t.alive) dot(t.x, t.y, 1.5, M.turret);
         const crit = g.critical >= 0;

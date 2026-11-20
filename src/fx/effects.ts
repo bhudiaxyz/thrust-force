@@ -28,13 +28,13 @@
  *     the draw range is exactly the live set; when a pool is full, random slots are reused.
  *   - All effect colours are HDR and toneMapped:false, so they bloom; they come from palette.ts.
  *
- * See also: view.ts, palette.ts (COLORS.fx, COLORS.ember), tier.ts (particles, dust);
+ * See also: render/view.ts, core/palette.ts (COLORS.fx, COLORS.ember), render/tier.ts (particles, dust);
  * DESIGN.md "7.3 Per-frame posing".
  */
 import * as THREE from "three";
-import { solidAt, type Level } from "./level";
-import { COLORS, ramp, type RGB } from "./palette";
-import type { TierSettings } from "./tier";
+import { solidAt, type Level } from "../world/level";
+import { COLORS, ramp, type RGB } from "../core/palette";
+import type { TierSettings } from "../render/tier";
 
 const C = COLORS;
 const MAX_DEBRIS = 400;

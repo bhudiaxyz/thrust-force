@@ -38,18 +38,20 @@
  *   - Textures are built once, lazily, on first use, and shared across levels.
  *   - blockAt is pure (no DOM), so scripts/check.ts can assert the layering.
  *
- * See also: view.ts (build), level.ts (grid, surface); DESIGN.md "7.2 Level meshes".
+ * See also: render/view.ts (build), world/level.ts (grid, surface); DESIGN.md "7.2 Level meshes".
  */
 import * as THREE from "three";
-import { isAir, type Level } from "./level";
-import { rng } from "./random";
-import { COLORS } from "./palette";
+import { isAir, type Level } from "../world/level";
+import { rng } from "../core/random";
+import { COLORS } from "../core/palette";
 
 export const BLOCK = { Stone: 0, Cobble: 1, Strata: 2, Gravel: 3, Topsoil: 4, Ore: 5, Crystal: 6, Basalt: 7 };
 const TILES = 8;
 const S = 16;
 /** Block types that carry their own colour: tint them close to white. */
 export const TINTLESS = new Set([BLOCK.Ore, BLOCK.Crystal]);
+/** Atlas textures, built once on first use (getAtlas). */
+let atlas: { map: THREE.Texture; glow: THREE.Texture; stone: THREE.Texture } | null = null;
 
 const hash = (x: number, y: number, s: number) => {
     const v = Math.sin(x * 127.1 + y * 311.7 + s * 74.7) * 43758.5453;
@@ -246,7 +248,6 @@ function texture(img: ImageData, repeat = false) {
     return t;
 }
 
-let atlas: { map: THREE.Texture; glow: THREE.Texture; stone: THREE.Texture } | null = null;
 function getAtlas() {
     if (atlas) return atlas;
     const { albedo, glow } = paintAtlas();

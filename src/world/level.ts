@@ -1,44 +1,42 @@
 /**
- * Level — seeded cave generator, the difficulty curve, and grid queries for one planet.
+ * Level — the difficulty curve, the seeded cave generator, and grid queries for one planet.
  *
  * Purpose
- *   Turns a planet number into a playable planet: a W x H occupancy grid (1 = rock, 0 = air,
- *   1 cell = 1 world unit, row 0 at the bottom, y up) with open sky at the top, a hilly surface,
- *   a winding shaft down to a flat-floored chamber, and the fixtures in it (pod, reactor,
- *   turrets, fuel cells, start point). Also answers the spatial questions the game asks of
- *   rock: "is this cell / point solid?" and "can A see B?".
+ *   Turns a planet number (and optional seed) into a playable planet: a W x H occupancy grid
+ *   (1 = rock, 0 = air, 1 cell = 1 world unit, row 0 at the bottom, y up) with open sky, a hilly
+ *   surface, a winding shaft to a flat-floored chamber, and its contents — pod, reactor,
+ *   turrets, fuel cells, landing pads, checkpoints, mines and laser gates. Also answers the
+ *   spatial questions the game asks: is this cell / point rock, can A see B, is a gate on.
  *
  * Operations
- *   - difficulty(n): every difficulty knob (gravity, depth, switchbacks, tunnel radius and
- *     wobble, pockets, branches, loops, caverns, turret count / rate / range / bullet speed /
- *     aim, fuel cells, reactor HP) eased from planet 1 to MAX_DIFFICULTY_AT (50), then held.
- *   - generateLevel(n): fill with rock → surface (two-sine heightline) → chamber (ellipse,
- *     refilled below floorY and cleared above, so the floor is flat) → shaft (switchbacks
- *     alternating left / right, joined by stroke()s of discs whose radius wobbles but never
- *     drops below minRadius; side pockets) → caverns, loops (second routes via the far side)
- *     and dead-end branches → 3-wide floor / ceiling mount points → pick() turrets and fuel
- *     cells with minimum spacing. Random choices come from rng(seed) (random.ts).
- *   - isRock / isAir (integer cells, on a Grid) and solidAt (world points): the one rock-or-air
- *     rule every module shares. Above the grid = air (the exit); left / right / below = rock.
- *   - lineOfSight(grid, a, b): samples the segment every 0.5 units with solidAt.
+ *   - difficulty(n): every knob eased (t^1.2) from planet 1 to MAX_DIFFICULTY_AT (50), then held:
+ *     gravity, depth, switchbacks, tunnel radius / pinch / wobble, pockets, branches, loops,
+ *     caverns, turrets (count, rate, range, bullet speed, aim, fraction that lead), fuel, reactor
+ *     HP; plus threats that arrive on schedule — mines from 8, gates from 15, leading turrets from
+ *     20 — and reversed gravity on every 10th planet.
+ *   - generateLevel(n, { seed }): surface → chamber → shaft switchbacks joined by stroke()s →
+ *     caverns, loops, dead-end branches → mount points → pads (before turrets) → turrets, fuel →
+ *     mines on shaft legs → gates across mid-leg tunnel rows → name and par time. A seed (daily
+ *     planet) changes the layout and name while difficulty follows n.
+ *   - isRock / isAir (integer cells on a Grid) and solidAt (world points): the one rock-or-air
+ *     rule every module shares. lineOfSight samples a segment with solidAt.
+ *   - gateOn(g, t) / gateIn(g, t): is a gate's beam on, and how soon it comes on.
  *
  * Usage
- *   game.ts: generateLevel(n) in Game.load(); solidAt / lineOfSight every step; lv.diff for
- *   turret behaviour. view.ts / rock.ts / minimap.ts / fx.ts read the grid through isRock /
- *   isAir / solidAt. scripts/check.ts flood-fills planets 1..50 and checks the curve.
+ *   core/game.ts: generateLevel in Game.load(); solidAt / lineOfSight / gateOn every step;
+ *   lv.diff for turret and mine behaviour. render/, ui/, fx/ read the grid and fixtures.
+ *   scripts/check.ts flood-fills planets 1–50 and checks the curve and schedule.
  *
  * Highlights
- *   - Pure: no three.js or DOM, so it runs under Node. Deterministic: same n, same planet
- *     (seed n * 7919 + 1337), name from names.ts.
- *   - The returned Level also carries mutable per-playthrough state (turret alive / cooldown,
- *     fuel amount); resetting a planet means calling generateLevel(n) again.
- *   - WALL = 3 columns each side are never carved, so the playfield is walled up into the sky.
+ *   - Pure and deterministic: no three.js or DOM; same n (and seed), same planet.
+ *   - The Level carries mutable per-playthrough state (turrets, fuel, mines); a reset is a
+ *     fresh generateLevel. WALL columns each side are never carved.
  *
- * See also: game.ts, names.ts, random.ts, view.ts, scripts/check.ts; DESIGN.md
- * "4. Coordinate system and the grid", "5. Level generation and difficulty".
+ * See also: core/game.ts, world/names.ts, core/random.ts, render/view.ts, scripts/check.ts;
+ * DESIGN.md "4. Coordinate system and the grid", "5. Level generation and difficulty".
  */
 import { planetName } from "./names";
-import { rng } from "./random";
+import { rng } from "../core/random";
 
 export interface Pt {
     x: number;
@@ -48,10 +46,38 @@ export interface Turret extends Pt {
     up: boolean; // floor-mounted (true) or hanging from the ceiling
     alive: boolean;
     cooldown: number;
+    lead: boolean; // aims where the ship will be, not where it is
 }
 export interface FuelCell extends Pt {
     amount: number;
 }
+/** Drifting proximity mine: rests at home, homes in on a ship it can see, explodes on contact. */
+export interface Mine extends Pt {
+    hx: number;
+    hy: number;
+    alive: boolean;
+}
+/** Laser gate: a horizontal beam across the tunnel from x0 to x1 at y, cycling on and off. */
+export interface Gate {
+    x0: number;
+    x1: number;
+    y: number;
+    period: number; // seconds per on/off cycle
+    phase: number; // 0..1 offset into the cycle
+}
+/** Fraction of each gate cycle the beam is on, and the warning flicker before it switches on. */
+export const MAX_DIFFICULTY_AT = 50;
+/** Columns on each side never carved, so the playfield is walled up into the sky. */
+export const WALL = 3;
+export const GATE_ON = 0.55,
+    GATE_WARN = 0.4;
+/** Is a gate's beam on at time t (seconds since the planet loaded)? */
+export const gateOn = (g: Gate, t: number) => (t / g.period + g.phase) % 1 < GATE_ON;
+/** Seconds until a gate next switches on (0 while it is on). */
+export const gateIn = (g: Gate, t: number) => {
+    const c = (t / g.period + g.phase) % 1;
+    return c < GATE_ON ? 0 : (1 - c) * g.period;
+};
 export interface Level {
     n: number;
     w: number;
@@ -68,6 +94,14 @@ export interface Level {
     exitY: number;
     name: string; // single-word planet name (names.ts)
     diff: Difficulty;
+    /** Switchback points, top to bottom: passing one makes it the respawn point. */
+    checkpoints: Pt[];
+    /** Landing pads (centre of the 3-cell floor, y = floor surface): landing refuels. */
+    pads: Pt[];
+    mines: Mine[];
+    gates: Gate[];
+    /** Target time in seconds for the time medal. */
+    par: number;
 }
 
 /**
@@ -96,9 +130,11 @@ export interface Difficulty {
     turretRange: number;
     bulletSpeed: number;
     aimSpread: number; // radians of random aim error
+    mines: number; // drifting proximity mines (from planet 8)
+    gates: number; // cycling laser gates (from planet 15)
+    leadAim: number; // fraction of turrets that lead their shots (from planet 20)
+    reversed: boolean; // gravity pulls up (every 10th planet)
 }
-
-export const MAX_DIFFICULTY_AT = 50;
 
 export function difficulty(n: number): Difficulty {
     const t = Math.min(1, Math.max(0, (n - 1) / (MAX_DIFFICULTY_AT - 1))) ** 1.2;
@@ -123,6 +159,10 @@ export function difficulty(n: number): Difficulty {
         turretRange: L(20, 32),
         bulletSpeed: L(7, 15),
         aimSpread: L(0.4, 0.08),
+        mines: n < 8 ? 0 : R(2, 9),
+        gates: n < 15 ? 0 : R(1, 5),
+        leadAim: n < 20 ? 0 : L(0.25, 0.85),
+        reversed: n % 10 === 0,
     };
 }
 
@@ -157,10 +197,13 @@ export function lineOfSight(lv: Grid, a: Pt, b: Pt): boolean {
     return true;
 }
 
-export const WALL = 3;
-
-export function generateLevel(n: number): Level {
-    const r = rng(n * 7919 + 1337);
+/**
+ * Generate planet n. opts.seed replaces the layout seed (the daily planet uses the date) while
+ * difficulty still follows n; the name then comes from the seed too.
+ */
+export function generateLevel(n: number, opts: { seed?: number } = {}): Level {
+    const seed = opts.seed ?? n * 7919 + 1337;
+    const r = rng(seed);
     const diff = difficulty(n);
     const w = 96;
     const sky = 34;
@@ -291,13 +334,63 @@ export function generateLevel(n: number): Level {
         return out;
     };
 
+    // Landing pads: one on the surface (away from the entrance), and about one per three
+    // switchbacks inside. Picked before turrets so nothing is mounted on them.
+    const pads = [
+        ...pick(
+            floors.filter((p) => p.y >= base - 8 && Math.abs(p.x - ex) > 12),
+            1,
+            10,
+            h
+        ),
+        ...pick(floors, Math.max(1, Math.round(diff.turns / 3)), 14, base - 6),
+    ];
+
     const turretCount = diff.turrets;
     const nf = Math.ceil(turretCount * 0.65);
     const turrets: Turret[] = [
         ...pick(floors, nf, 10, base + 6).map((p) => ({ ...p, y: p.y + 0.45, up: true })),
         ...pick(ceilings, turretCount - nf, 10, base - 2).map((p) => ({ ...p, y: p.y - 0.45, up: false })),
-    ].map((t) => ({ ...t, alive: true, cooldown: 1 + r() * 3 }));
+    ].map((t) => ({ ...t, alive: true, cooldown: 1 + r() * 3, lead: r() < diff.leadAim }));
     const fuel = pick(floors, diff.fuelCells, 9, base - 4).map((p) => ({ x: p.x, y: p.y + 0.5, amount: 35 }));
+
+    // Mines: on shaft legs (midpoint of a random leg, nudged), in open air, away from fixtures.
+    const open = (p: Pt) => {
+        for (let dy = -1; dy <= 1; dy++)
+            for (let dx = -1; dx <= 1; dx++) if (solid(Math.floor(p.x) + dx, Math.floor(p.y) + dy)) return false;
+        return true;
+    };
+    const mines: Mine[] = [];
+    for (let tries = 0; mines.length < diff.mines && tries < diff.mines * 12; tries++) {
+        const i = 1 + Math.floor(r() * (pts.length - 2));
+        const a = pts[i],
+            b = pts[i + 1],
+            k = 0.25 + r() * 0.5;
+        const p = { x: a.x + (b.x - a.x) * k + (r() - 0.5) * 3, y: a.y + (b.y - a.y) * k + (r() - 0.5) * 3 };
+        if (!open(p) || !far(p, 9) || mid.some((c) => Math.hypot(c.x - p.x, c.y - p.y) < 7)) continue;
+        taken.push(p);
+        mines.push({ ...p, hx: p.x, hy: p.y, alive: true });
+    }
+
+    // Laser gates: a horizontal beam across the tunnel at the middle of a shaft leg.
+    const gates: Gate[] = [];
+    const usedLegs = new Set<number>();
+    for (let tries = 0; gates.length < diff.gates && tries < diff.gates * 10; tries++) {
+        const i = 1 + Math.floor(r() * (pts.length - 2));
+        if (usedLegs.has(i)) continue;
+        const a = pts[i],
+            b = pts[i + 1];
+        const y = Math.floor((a.y + b.y) / 2),
+            mx = Math.floor((a.x + b.x) / 2);
+        if (solid(mx, y)) continue;
+        let x0 = mx,
+            x1 = mx;
+        while (!solid(x0 - 1, y)) x0--;
+        while (!solid(x1 + 1, y)) x1++;
+        if (x1 - x0 < 5 || x1 - x0 > 26) continue;
+        usedLegs.add(i);
+        gates.push({ x0, x1: x1 + 1, y: y + 0.5, period: 3 + r() * 1.5, phase: r() });
+    }
 
     return {
         n,
@@ -305,7 +398,7 @@ export function generateLevel(n: number): Level {
         h,
         grid,
         surface,
-        gravity: diff.gravity,
+        gravity: diff.reversed ? -diff.gravity : diff.gravity,
         start,
         pod,
         reactor,
@@ -313,7 +406,12 @@ export function generateLevel(n: number): Level {
         turrets,
         fuel,
         exitY: h - 3,
-        name: planetName(n),
+        name: planetName(opts.seed === undefined ? n : 51 + (seed % 100000)),
         diff,
+        checkpoints: mid,
+        pads,
+        mines,
+        gates,
+        par: Math.round(25 + diff.depth * 0.3 + diff.turns * 5),
     };
 }
