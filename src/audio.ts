@@ -113,3 +113,8 @@ export const sfx = {
 };
 
 export const isMuted = () => muted;
+
+/** Idle: suspend the AudioContext (stops the engine loop's CPU work); unlock() resumes it. */
+export function suspendAudio() {
+    if (ctx && ctx.state === 'running') void ctx.suspend();
+}

@@ -43,8 +43,10 @@ with sync_playwright() as p:
     pg.keyboard.press('Escape')
     pg.wait_for_selector('#pause.open', timeout=5000)
     pg.screenshot(path=f'{out}/pause.png')
+    until(pg, '!window.__running', 'loop should idle while paused')
     pg.keyboard.press('Escape')
     pg.wait_for_selector('#pause.open', state='hidden', timeout=5000)
+    until(pg, 'window.__running', 'loop should wake on resume')
     print('desktop ok')
 
     # Phone: touch stick + buttons.

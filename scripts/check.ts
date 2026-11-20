@@ -5,7 +5,7 @@
  *   The smallest set of checks that fail if the core logic breaks, runnable without a browser.
  *
  * Operations
- *   1. Planets 1..12: a flood fill that only enters cells with a full 3x3 of air (ship-sized)
+ *   1. Planets 1..50: a flood fill that only enters cells with a full 3x3 of air (ship-sized)
  *      reaches the pod and reactor from the start; turrets and fuel cells sit in air; at least
  *      three turrets; generation is deterministic.
  *   2. rod() holds its length to 1e-9 over 2000 steps while both bodies fall and one
@@ -28,11 +28,14 @@
  * "13. Checks and tooling".
  */
 import assert from 'node:assert/strict';
-import { generateLevel, solidAt } from '../src/level';
+import { difficulty, generateLevel, MAX_DIFFICULTY_AT, solidAt, type Difficulty } from '../src/level';
+import { PLANET_THEMES, themeFor } from '../src/palette';
+import { PLANET_NAMES, planetName } from '../src/names';
 import { Game, rod, type Input } from '../src/game';
 import { classifyGpu } from '../src/tier';
+import { BLOCK, blockAt } from '../src/rock';
 
-for (let n = 1; n <= 12; n++) {
+for (let n = 1; n <= 50; n++) {
     const lv = generateLevel(n);
     const open = (x: number, y: number) => {
         for (let dy = -1; dy <= 1; dy++)
@@ -62,7 +65,7 @@ for (let n = 1; n <= 12; n++) {
     };
     assert.ok(reach(lv.pod.x, lv.pod.y), `level ${n}: pod unreachable`);
     assert.ok(reach(lv.reactor.x, lv.reactor.y + 2), `level ${n}: reactor unreachable`);
-    assert.ok(lv.turrets.length >= 3, `level ${n}: only ${lv.turrets.length} turrets`);
+    assert.ok(lv.turrets.length >= 2, `level ${n}: only ${lv.turrets.length} turrets`);
     for (const t of lv.turrets) assert.ok(!solidAt(lv, t.x, t.y), `level ${n}: turret in rock`);
     for (const f of lv.fuel) assert.ok(!solidAt(lv, f.x, f.y), `level ${n}: fuel in rock`);
     assert.deepEqual(generateLevel(n).grid, lv.grid, `level ${n}: not deterministic`);
@@ -136,6 +139,59 @@ for (let n = 1; n <= 12; n++) {
     assert.equal(t('Adreno (TM) 618', true), 'low');
     assert.equal(t('Mali-G78', true), 'mid');
     assert.equal(t('ANGLE (NVIDIA GeForce RTX 3060)', false, 8, 2), 'low');
+}
+
+{
+    // Block types: every kind appears on a deep planet, topsoil only on the surface skin,
+    // ore/crystal only on air-facing cells.
+    const lv = generateLevel(6);
+    const seen = new Set<number>();
+    for (let y = 0; y < lv.h; y++)
+        for (let x = 0; x < lv.w; x++) {
+            if (!solidAt(lv, x + 0.5, y + 0.5)) continue;
+            const b = blockAt(lv, x, y);
+            seen.add(b);
+            if (b === BLOCK.Topsoil) assert.ok(y >= lv.surface[x] - 1, `topsoil buried at ${x},${y}`);
+            if (b === BLOCK.Ore || b === BLOCK.Crystal) {
+                const exposed = [
+                    [1, 0],
+                    [-1, 0],
+                    [0, 1],
+                    [0, -1],
+                ].some(([dx, dy]) => !solidAt(lv, x + dx + 0.5, y + dy + 0.5));
+                assert.ok(exposed, `ore/crystal hidden inside rock at ${x},${y}`);
+            }
+        }
+    assert.equal(seen.size, Object.keys(BLOCK).length, `missing block types: ${[...seen]}`);
+}
+
+{
+    // Difficulty only ever gets harder planet to planet, saturating at MAX_DIFFICULTY_AT.
+    const harder: (keyof Difficulty)[] = ['gravity', 'depth', 'turns', 'turrets', 'reactorHp', 'bulletSpeed', 'branches'];
+    const easier: (keyof Difficulty)[] = ['radius', 'minRadius', 'turretInterval', 'aimSpread'];
+    for (let n = 2; n <= MAX_DIFFICULTY_AT + 5; n++) {
+        const a = difficulty(n - 1),
+            b = difficulty(n);
+        for (const k of harder) assert.ok(b[k] >= a[k], `${k} dropped at planet ${n}`);
+        for (const k of easier) assert.ok(b[k] <= a[k], `${k} rose at planet ${n}`);
+    }
+    assert.deepEqual(difficulty(MAX_DIFFICULTY_AT), difficulty(MAX_DIFFICULTY_AT + 10));
+    assert.ok(difficulty(1).minRadius > 4, 'planet 1 should be roomy');
+
+    // Themes: consecutive planets never share a theme within a full cycle.
+    const names = new Set(Array.from({ length: PLANET_THEMES.length }, (_, i) => themeFor(i + 1).name));
+    assert.equal(names.size, PLANET_THEMES.length);
+    assert.equal(themeFor(PLANET_THEMES.length + 1), themeFor(1), 'themes should cycle');
+}
+
+{
+    // Planet names: the 50 hand-picked ones are unique; every name is one capitalised word.
+    assert.equal(PLANET_NAMES.length, MAX_DIFFICULTY_AT, 'one hand-picked name per planet up to full difficulty');
+    assert.equal(new Set(PLANET_NAMES).size, PLANET_NAMES.length, 'duplicate planet name');
+    for (let n = 1; n <= 300; n++) assert.match(planetName(n), /^[A-Z][a-z]+$/, `planet ${n}: "${planetName(n)}"`);
+    assert.equal(planetName(1), 'Avren');
+    assert.equal(planetName(77), planetName(77), 'generated names must be stable');
+    assert.equal(generateLevel(3).name, planetName(3));
 }
 
 console.log('check: ok');

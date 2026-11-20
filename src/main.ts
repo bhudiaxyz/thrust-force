@@ -32,7 +32,7 @@
  *     key or button.
  *   - KEY_HELP / TOUCH_HELP drive both the splash hint and the pause bindings; keep them in
  *     step with KEYS and the #touch buttons. The device is chosen by (pointer: coarse).
- *   - window.__game is a read-only test hook used by scripts/smoke.py.
+ *   - window.__game / window.__running are read-only test hooks used by scripts/smoke.py.
  *
  * See also: game.ts, view.ts, tier.ts, audio.ts, index.html, styles.css; DESIGN.md
  * "9. Input", "10. UI" and "12. Frame loop".
@@ -41,14 +41,17 @@ import './styles.css';
 import nipplejs from 'nipplejs';
 import { Game, CFG, type GameEvent, type Input } from './game';
 import { View } from './view';
+import { Minimap } from './minimap';
+import { applyUiColors, COLORS, type RGB } from './palette';
 import { detectTier, TIER_SETTINGS } from './tier';
-import { sfx, setEngine, toggleMute, unlock, isMuted } from './audio';
+import { sfx, setEngine, toggleMute, unlock, isMuted, suspendAudio } from './audio';
 
 const $ = (id: string) => document.getElementById(id)!;
 const boot = $('boot'),
     pauseEl = $('pause'),
     hud = $('hud');
 const isTouch = matchMedia('(pointer: coarse)').matches;
+applyUiColors();
 
 const input: Input = { left: false, right: false, thrust: false, fire: false, shield: false };
 const KEYS: Record<string, keyof Input> = {
@@ -74,6 +77,7 @@ const KEY_HELP = [
     ['↓ / S / Shift', 'Shield + tractor'],
     ['Esc / P', 'Pause'],
     ['M', 'Sound on / off'],
+    ['N', 'Minimap'],
 ];
 const TOUCH_HELP = [
     ['Left stick', 'Aim the nose'],
@@ -82,6 +86,7 @@ const TOUCH_HELP = [
     ['●', 'Fire'],
     ['◎', 'Shield + tractor'],
     ['❚❚', 'Pause'],
+    ['Map icon', 'Minimap'],
 ];
 const help = isTouch ? TOUCH_HELP : KEY_HELP;
 document.querySelector('#pause .bindings')!.innerHTML = help
@@ -94,23 +99,23 @@ document.querySelector('.ls-controls')!.textContent = help
 document.querySelector('.ls-enter')!.textContent = isTouch ? 'Tap to launch' : 'Click or press Enter to launch';
 
 let view: View;
+const minimap = new Minimap($('minimap'), isTouch);
 let attract: Game;
 let game: Game | null = null;
 let paused = false;
 let ready = false;
 let best = Number(localStorage.getItem('tf-best') ?? 0);
 
-const BURSTS: Partial<Record<GameEvent, [number, number, [number, number, number], number]>> = {
-    hit: [6, 4, [2, 2, 2.5], 0.3],
-    boom: [50, 9, [3, 1.2, 0.3], 1],
-    bigBoom: [160, 14, [3, 1.6, 0.6], 1.6],
-    fuel: [30, 5, [0.4, 3, 0.8], 0.8],
-    attach: [24, 4, [3, 2.4, 0.6], 0.6],
-    land: [10, 2, [1, 1, 1], 0.4],
+const BURSTS: Partial<Record<GameEvent, [number, number, RGB, number]>> = {
+    hit: [6, 4, COLORS.fx.hit, 0.3],
+    fuel: [30, 5, COLORS.fx.fuel, 0.8],
+    attach: [24, 4, COLORS.fx.attach, 0.6],
+    land: [10, 2, COLORS.fx.land, 0.4],
 };
 
 function onEvent(e: GameEvent, x: number, y: number) {
     sfx[e]?.();
+    if (e === 'bigBoom' || e === 'boom') view.explode(x, y, e === 'bigBoom');
     const b = BURSTS[e];
     if (b) view.burst(x, y, b[0], b[1], b[2], b[3]);
     if (e === 'gameover') setPause(true);
@@ -122,6 +127,7 @@ function start() {
     game.onEvent = onEvent;
     setPause(false);
     hud.hidden = false;
+    $('minimap').hidden = false;
     if (!boot.classList.contains('dismissed')) {
         boot.classList.add('dismissed');
         setTimeout(() => boot.classList.add('gone'), 700);
@@ -138,10 +144,11 @@ function setPause(open: boolean) {
     pauseEl.dataset.kind = over ? 'over' : 'pause';
     $('pause-title').textContent = over ? 'Mission over' : 'Paused';
     document.querySelector('#pause .p-score')!.textContent = game
-        ? `Score ${game.score.toLocaleString()} · Planet ${game.levelNo} · Best ${best.toLocaleString()}`
+        ? `Score ${game.score.toLocaleString()} · Planet ${game.levelNo}: ${game.level.name} · Best ${best.toLocaleString()}`
         : '';
     $('pause-mute').querySelector('span')!.textContent = `Sound ${isMuted() ? 'off' : 'on'}`;
     pauseEl.classList.toggle('open', open);
+    wake();
     if (open) (over ? $('pause-restart') : $('pause-resume')).focus({ preventScroll: true });
     else unlock();
 }
@@ -161,11 +168,20 @@ addEventListener('keydown', (e) => {
     if (e.code === 'Escape' || e.code === 'KeyP') {
         if (!over) setPause(!paused);
     } else if ((e.code === 'KeyR' && paused) || (e.code === 'Enter' && over)) start();
+    else if (e.code === 'KeyN') minimap.toggle();
     else if (e.code === 'KeyM') {
         toggleMute();
         if (paused) setPause(true);
     }
 });
+// Any input or resize wakes an idle loop.
+for (const ev of ['keydown', 'pointerdown', 'pointermove', 'wheel', 'resize'] as const)
+    addEventListener(ev, wake, { passive: true });
+// Hidden tab / minimised window: pause a running game (the loop then idles and audio suspends).
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden && game && game.phase !== 'over' && !paused) setPause(true);
+});
+
 addEventListener('keyup', (e) => {
     const k = KEYS[e.code];
     if (k) input[k] = false;
@@ -212,7 +228,7 @@ const joy = nipplejs.create({
     zone: $('joy'),
     mode: 'dynamic',
     size: STICK,
-    color: 'rgba(102,224,255,0.45)',
+    color: COLORS.ui.stick,
     restOpacity: 0.6,
 });
 joy.on('move', (evt) => {
@@ -244,7 +260,7 @@ const hudScore = $('h-score'),
 function drawHud(g: Game) {
     hudScore.textContent = g.score.toLocaleString();
     hudLives.textContent = '▲'.repeat(Math.max(0, g.lives));
-    hudLevel.textContent = `Planet ${g.levelNo}`;
+    hudLevel.textContent = `Planet ${g.levelNo}: ${g.level.name}`;
     hudFuel.style.width = `${(g.fuel / CFG.fuelMax) * 100}%`;
     hudFuel.classList.toggle('low', g.fuel < 20);
     hudReactor.style.width = `${(g.reactorHp / g.level.reactorHp) * 100}%`;
@@ -253,14 +269,36 @@ function drawHud(g: Game) {
     hudMsg.style.opacity = String(Math.min(1, Math.max(0, g.messageTime * 2)));
 }
 
+// Idle handling: when nothing is simulating (splash, paused, game over) the loop keeps drawing
+// for SETTLE seconds so the camera, particles and debris come to rest, then stops requesting
+// frames entirely (no GPU or CPU work, audio suspended). wake() restarts it: any input, resize,
+// pause toggle or launch calls it.
+const SETTLE = 1.5;
 let last = performance.now();
-function frame(now: number) {
+let idleFor = 0;
+let running = false;
+function wake() {
+    idleFor = 0;
+    if (running || !view) return;
+    running = true;
+    last = performance.now();
     requestAnimationFrame(frame);
+}
+function frame(now: number) {
     const dt = Math.min((now - last) / 1000, 1 / 20);
     last = now;
+    const active = !!game && !paused;
+    idleFor = active ? 0 : idleFor + dt;
+    if (idleFor > SETTLE) {
+        running = false;
+        suspendAudio();
+        return;
+    }
+    requestAnimationFrame(frame);
     if (game && !paused) {
         game.update(dt, steer(game));
         drawHud(game);
+        minimap.draw(game);
     }
     setEngine(!!game && !paused && game.thrusting && game.phase === 'play');
     view.sync(game ?? attract, paused ? 0 : dt);
@@ -289,7 +327,7 @@ const step = async (i: number) => {
         document.querySelector('.ls-best')!.textContent = best ? `Best ${best.toLocaleString()}` : '';
         boot.classList.add('ready');
         ready = true;
-        requestAnimationFrame(frame);
+        wake();
     } catch (err) {
         const sub = document.querySelector('.ls-sub')!;
         sub.classList.add('error');
@@ -299,3 +337,4 @@ const step = async (i: number) => {
 
 // Test hook (scripts/smoke.py reads ship state through it).
 Object.defineProperty(window, '__game', { get: () => game });
+Object.defineProperty(window, '__running', { get: () => running });

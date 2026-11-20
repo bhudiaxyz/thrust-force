@@ -44,17 +44,12 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import type { Game } from './game';
-import type { Level } from './level';
+import { solidAt, type Level } from './level';
 import type { TierSettings } from './tier';
+import { BLOCK, blockAt, rockMaterial, TINTLESS, wallMaterial } from './rock';
+import { COLORS, ramp, themeFor, type RGB } from './palette';
 
-const PALETTES = [
-    { deep: 0x2a1d3a, top: 0x6b4a7a, surf: 0x9a7bd0, neon: [0.4, 1.6, 3.0], sky: 0x07071a },
-    { deep: 0x3a1e12, top: 0x8a4a28, surf: 0xd08a4a, neon: [3.0, 1.0, 0.3], sky: 0x140806 },
-    { deep: 0x0f2a24, top: 0x2f6a58, surf: 0x6ad0a0, neon: [0.3, 3.0, 1.4], sky: 0x03100e },
-    { deep: 0x1a2236, top: 0x52617f, surf: 0xc8d6f0, neon: [1.8, 2.4, 3.0], sky: 0x060a14 },
-    { deep: 0x301018, top: 0x7a2a3a, surf: 0xe0708a, neon: [3.0, 0.4, 1.4], sky: 0x12040a },
-    { deep: 0x2a2a10, top: 0x6a6a2a, surf: 0xd8d070, neon: [2.6, 2.4, 0.4], sky: 0x0c0c04 },
-];
+const C = COLORS;
 
 function dotTexture() {
     const c = document.createElement('canvas');
@@ -88,8 +83,9 @@ function pointsLayer(max: number, size: number, tex: THREE.Texture) {
     return pts;
 }
 
-const neonMat = (r: number, g: number, b: number) =>
-    new THREE.MeshBasicMaterial({ color: new THREE.Color(r, g, b), toneMapped: false });
+const MAX_DEBRIS = 400;
+
+const neonMat = ([r, g, b]: RGB) => new THREE.MeshBasicMaterial({ color: new THREE.Color(r, g, b), toneMapped: false });
 
 export class View {
     readonly renderer: THREE.WebGLRenderer;
@@ -102,7 +98,7 @@ export class View {
     private ship = new THREE.Group();
     private flame: THREE.Mesh;
     private shield: THREE.Mesh;
-    private shipLight = new THREE.PointLight(0x9fd8ff, 14, 18, 1.4);
+    private shipLight = new THREE.PointLight(C.light.ship, 14, 18, 1.4);
     private pod = new THREE.Group();
     private rodLine: THREE.Line;
     private beamLine: THREE.Line;
@@ -110,10 +106,10 @@ export class View {
     private fuel: THREE.Group[] = [];
     private reactor = new THREE.Group();
     private reactorCore!: THREE.Mesh;
-    private reactorLight = new THREE.PointLight(0xff6a2a, 50, 18, 1.6);
+    private reactorLight = new THREE.PointLight(C.light.reactor, 50, 18, 1.6);
     private bullets: THREE.Points;
     private sparks: THREE.Points;
-    private sun = new THREE.DirectionalLight(0xffffff, 1.6);
+    private sun = new THREE.DirectionalLight(C.light.sun, 1.6);
     private maxP: number;
     private pv: Float32Array;
     private plife: Float32Array;
@@ -121,6 +117,19 @@ export class View {
     private pn = 0;
     private shake = 0;
     private time = 0;
+    // Explosions: tumbling ember voxels, shockwave rings and a flash light (see explode()).
+    private debris: THREE.InstancedMesh;
+    private dPos = new Float32Array(MAX_DEBRIS * 3);
+    private dVel = new Float32Array(MAX_DEBRIS * 3);
+    private dRot = new Float32Array(MAX_DEBRIS * 3);
+    private dSpin = new Float32Array(MAX_DEBRIS * 3);
+    private dLife = new Float32Array(MAX_DEBRIS * 2); // remaining, total
+    private dSize = new Float32Array(MAX_DEBRIS);
+    private dTint = new Float32Array(MAX_DEBRIS * 3); // 0,0,0 = ember (cools white→amber→red)
+    private dn = 0;
+    private rings: { mesh: THREE.Mesh; life: number; max: number; size: number }[] = [];
+    private flash = new THREE.PointLight(C.light.flash, 0, 40, 1.4);
+    private neon: RGB = themeFor(1).neon;
 
     constructor(
         parent: HTMLElement,
@@ -137,7 +146,7 @@ export class View {
 
         // Sun from upper-left-front. On the high tier it casts a soft shadow map that follows the
         // ship, so rock, ship and pod throw shadows onto the back wall and tunnel sides.
-        this.scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x201810, 0.9));
+        this.scene.add(new THREE.HemisphereLight(C.light.hemiSky, C.light.hemiGround, 0.9));
         if (ts.shadows) {
             this.renderer.shadowMap.enabled = true;
             this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -170,18 +179,18 @@ export class View {
         hullGeo.translate(0, 0, -0.25);
         const hullMesh = new THREE.Mesh(
             hullGeo,
-            new THREE.MeshStandardMaterial({ color: 0x5a6678, metalness: 0.7, roughness: 0.35 }),
+            new THREE.MeshStandardMaterial({ color: C.ship.hull, metalness: 0.7, roughness: 0.35 }),
         );
         const edges = new THREE.LineSegments(
             new THREE.EdgesGeometry(hullGeo, 30),
-            new THREE.LineBasicMaterial({ color: new THREE.Color(0.6, 2.2, 3.0), toneMapped: false }),
+            new THREE.LineBasicMaterial({ color: new THREE.Color(...C.ship.outline), toneMapped: false }),
         );
-        const canopy = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 8), neonMat(0.5, 2.5, 3));
+        const canopy = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 8), neonMat(C.ship.canopy));
         canopy.position.set(0, 0.2, 0.32);
         this.flame = new THREE.Mesh(
             new THREE.ConeGeometry(0.28, 1, 10),
             new THREE.MeshBasicMaterial({
-                color: new THREE.Color(3, 1.4, 0.4),
+                color: new THREE.Color(...C.ship.flame),
                 toneMapped: false,
                 transparent: true,
                 opacity: 0.9,
@@ -192,7 +201,7 @@ export class View {
         this.shield = new THREE.Mesh(
             new THREE.RingGeometry(1.2, 1.32, 48),
             new THREE.MeshBasicMaterial({
-                color: new THREE.Color(0.6, 2, 3),
+                color: new THREE.Color(...C.ship.shield),
                 toneMapped: false,
                 transparent: true,
                 opacity: 0.8,
@@ -207,17 +216,17 @@ export class View {
         // Pod: glossy orb in a neon ring.
         const orb = new THREE.Mesh(
             new THREE.SphereGeometry(0.6, 24, 16),
-            new THREE.MeshStandardMaterial({ color: 0x8090a0, metalness: 0.8, roughness: 0.25 }),
+            new THREE.MeshStandardMaterial({ color: C.pod.body, metalness: 0.8, roughness: 0.25 }),
         );
-        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.66, 0.06, 8, 32), neonMat(2.8, 2.2, 0.6));
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.66, 0.06, 8, 32), neonMat(C.pod.ring));
         orb.castShadow = true;
         this.pod.add(orb, ring);
 
-        const lineMat = (r: number, g: number, b: number) =>
+        const lineMat = ([r, g, b]: RGB) =>
             new THREE.LineBasicMaterial({ color: new THREE.Color(r, g, b), toneMapped: false });
         const line = () => new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
-        this.rodLine = new THREE.Line(line(), lineMat(2.4, 2.0, 0.8));
-        this.beamLine = new THREE.Line(line(), lineMat(0.6, 3, 1.2));
+        this.rodLine = new THREE.Line(line(), lineMat(C.pod.rod));
+        this.beamLine = new THREE.Line(line(), lineMat(C.pod.beam));
         this.rodLine.frustumCulled = this.beamLine.frustumCulled = false;
         this.scene.add(this.rodLine, this.beamLine);
 
@@ -225,6 +234,32 @@ export class View {
         this.bullets = pointsLayer(400, 0.5, tex);
         this.sparks = pointsLayer(this.maxP, 0.35, tex);
         this.scene.add(this.bullets, this.sparks);
+
+        this.debris = new THREE.InstancedMesh(
+            new THREE.BoxGeometry(1, 1, 1),
+            new THREE.MeshBasicMaterial({ toneMapped: false }),
+            MAX_DEBRIS,
+        );
+        this.debris.setColorAt(0, new THREE.Color());
+        this.debris.count = 0;
+        this.debris.frustumCulled = false;
+        const ringGeo = new THREE.RingGeometry(0.85, 1, 48);
+        for (let k = 0; k < 6; k++) {
+            const mesh = new THREE.Mesh(
+                ringGeo,
+                new THREE.MeshBasicMaterial({
+                    toneMapped: false,
+                    transparent: true,
+                    blending: THREE.AdditiveBlending,
+                    depthWrite: false,
+                    side: THREE.DoubleSide,
+                }),
+            );
+            mesh.visible = false;
+            this.rings.push({ mesh, life: 0, max: 1, size: 1 });
+            this.scene.add(mesh);
+        }
+        this.scene.add(this.debris, this.flash);
 
         this.composer = new EffectComposer(this.renderer);
         this.composer.addPass(new RenderPass(this.scene, this.camera));
@@ -252,36 +287,47 @@ export class View {
             }
         });
         this.levelGroup.clear();
-        const pal = PALETTES[(lv.n - 1) % PALETTES.length];
+        const pal = themeFor(lv.n);
         this.scene.background = new THREE.Color(pal.sky);
         const { w, h, grid } = lv;
         const solid = (x: number, y: number) => x < 0 || x >= w || y < 0 || (y < h && grid[y * w + x] === 1);
         const air = (x: number, y: number) => x >= 0 && x < w && y >= 0 && !solid(x, y);
 
-        // Rock voxels.
+        // Rock voxels: one instance per solid cell; aTile picks its block type (rock.ts). A MARGIN
+        // of solid cells beyond the grid's sides and bottom fills what the camera would otherwise
+        // show as empty void near the walls and floor.
+        const MARGIN = 12;
         let count = 0;
-        for (const c of grid) count += c;
-        const rock = new THREE.InstancedMesh(
-            new THREE.BoxGeometry(1, 1, 3),
-            new THREE.MeshStandardMaterial({ roughness: 0.85, metalness: 0.05 }),
-            count,
-        );
+        for (let y = -MARGIN; y < h; y++) for (let x = -MARGIN; x < w + MARGIN; x++) if (solid(x, y)) count++;
+        const tiles = new Float32Array(count);
+        const rockGeo = new THREE.BoxGeometry(1, 1, 3);
+        rockGeo.setAttribute('aTile', new THREE.InstancedBufferAttribute(tiles, 1));
+        const rock = new THREE.InstancedMesh(rockGeo, rockMaterial(), count);
         const m = new THREE.Matrix4();
         const col = new THREE.Color();
+        const white = new THREE.Color(1, 1, 1);
         const deep = new THREE.Color(pal.deep),
             top = new THREE.Color(pal.top),
             surf = new THREE.Color(pal.surf);
         let i = 0;
         const bars: { x: number; y: number; horiz: boolean }[] = [];
-        for (let y = 0; y < h; y++)
-            for (let x = 0; x < w; x++) {
+        for (let y = -MARGIN; y < h; y++)
+            for (let x = -MARGIN; x < w + MARGIN; x++) {
                 if (!solid(x, y)) continue;
+                const inside = x >= 0 && x < w && y >= 0;
+                const sx = Math.min(Math.max(x, 0), w - 1);
                 const hash = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
                 const jitter = (hash - Math.floor(hash)) * 0.18 - 0.09;
                 m.makeTranslation(x + 0.5, y + 0.5, 0);
                 rock.setMatrixAt(i, m);
-                col.copy(deep).lerp(top, y / h);
-                if (air(x, y + 1) && y >= lv.surface[x] - 2) col.copy(surf);
+                const tile = inside ? blockAt(lv, x, y) : BLOCK.Stone;
+                tiles[i] = tile;
+                col.copy(deep).lerp(top, Math.max(0, y) / h);
+                if (inside && y >= lv.surface[sx] - 4) col.lerp(surf, y >= lv.surface[sx] - 1 ? 1 : 0.45);
+                if (!inside) col.multiplyScalar(0.7);
+                // The tile textures average ~75% brightness, so lift the tint to keep the palette.
+                col.multiplyScalar(1.45);
+                if (TINTLESS.has(tile)) col.lerp(white, C.rock.tintlessLift);
                 col.offsetHSL(0, 0, jitter);
                 rock.setColorAt(i++, col);
                 if (air(x, y + 1)) bars.push({ x: x + 0.5, y: y + 1, horiz: true });
@@ -294,7 +340,8 @@ export class View {
 
         // Neon edge strips on the front face.
         const [nr, ng, nb] = pal.neon;
-        const strips = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), neonMat(nr, ng, nb), bars.length);
+        this.neon = [nr, ng, nb];
+        const strips = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), neonMat(pal.neon), bars.length);
         const s = new THREE.Vector3(),
             q = new THREE.Quaternion(),
             p = new THREE.Vector3();
@@ -312,7 +359,7 @@ export class View {
         for (let x = w - 1; x >= 0; x--) back.lineTo(x + 0.5, lv.surface[x] - 1);
         const wall = new THREE.Mesh(
             new THREE.ShapeGeometry(back),
-            new THREE.MeshStandardMaterial({ color: new THREE.Color(pal.deep).multiplyScalar(0.55), roughness: 1 }),
+            wallMaterial(new THREE.Color(pal.deep).multiplyScalar(0.6)),
         );
         wall.position.z = -1.45;
         wall.receiveShadow = true;
@@ -325,7 +372,7 @@ export class View {
         for (let k = 0; k < starCount; k++) {
             sp.set([-80 + Math.random() * (w + 160), h * 0.4 + Math.random() * h, -40 - Math.random() * 40], k * 3);
             const v = 0.4 + Math.random() * 1.4;
-            sc.set([v, v, v * 1.1], k * 3);
+            sc.set([v * C.fx.star[0], v * C.fx.star[1], v * C.fx.star[2]], k * 3);
         }
         const sg = new THREE.BufferGeometry();
         sg.setAttribute('position', new THREE.BufferAttribute(sp, 3));
@@ -345,7 +392,7 @@ export class View {
         // Pod pedestal.
         const ped = new THREE.Mesh(
             new THREE.CylinderGeometry(0.9, 1.1, 0.25, 16),
-            new THREE.MeshStandardMaterial({ color: 0x506070, metalness: 0.7, roughness: 0.4 }),
+            new THREE.MeshStandardMaterial({ color: C.fixture.pedestal, metalness: 0.7, roughness: 0.4 }),
         );
         ped.position.set(lv.pod.x, lv.pod.y - 0.62, 0);
         this.levelGroup.add(ped);
@@ -354,8 +401,8 @@ export class View {
         const domeGeo = new THREE.SphereGeometry(0.6, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2);
         const barrelGeo = new THREE.CylinderGeometry(0.1, 0.12, 0.9, 8);
         barrelGeo.translate(0, 0.45, 0);
-        const tMat = new THREE.MeshStandardMaterial({ color: 0x7a2020, metalness: 0.5, roughness: 0.4 });
-        const eyeMat = neonMat(3, 0.3, 0.2);
+        const tMat = new THREE.MeshStandardMaterial({ color: C.fixture.turret, metalness: 0.5, roughness: 0.4 });
+        const eyeMat = neonMat(C.fixture.turretEye);
         this.turrets = lv.turrets.map((t) => {
             const g = new THREE.Group();
             const dome = new THREE.Mesh(domeGeo, tMat);
@@ -375,8 +422,8 @@ export class View {
 
         // Fuel cells.
         const fGeo = new THREE.BoxGeometry(1, 1, 1);
-        const fMat = new THREE.MeshStandardMaterial({ color: 0x30383a, metalness: 0.6, roughness: 0.4 });
-        const fBand = neonMat(0.4, 3, 0.8);
+        const fMat = new THREE.MeshStandardMaterial({ color: C.fixture.fuelBody, metalness: 0.6, roughness: 0.4 });
+        const fBand = neonMat(C.fixture.fuelBand);
         this.fuel = lv.fuel.map((f) => {
             const g = new THREE.Group();
             const band = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.18, 1.05), fBand);
@@ -388,12 +435,12 @@ export class View {
 
         // Reactor: base, dome, glowing core, chimney.
         this.reactor.clear();
-        const rMat = new THREE.MeshStandardMaterial({ color: 0x606a78, metalness: 0.7, roughness: 0.35 });
+        const rMat = new THREE.MeshStandardMaterial({ color: C.fixture.reactorBody, metalness: 0.7, roughness: 0.35 });
         const base = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.8, 2.4), rMat);
         base.position.y = 0.4;
         const dome = new THREE.Mesh(new THREE.SphereGeometry(1.3, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), rMat);
         dome.position.y = 0.8;
-        this.reactorCore = new THREE.Mesh(new THREE.SphereGeometry(0.55, 16, 12), neonMat(3, 1.2, 0.3));
+        this.reactorCore = new THREE.Mesh(new THREE.SphereGeometry(0.55, 16, 12), neonMat(C.fixture.reactorCoreSwing));
         this.reactorCore.position.set(0, 1.2, 1.05);
         const chimney = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.4, 2.6, 12), rMat);
         chimney.position.set(1.2, 1.9, -0.4);
@@ -404,9 +451,10 @@ export class View {
         this.reactor.visible = true;
         this.builtFor = lv;
         this.pn = 0;
+        this.dn = 0;
     }
 
-    burst(x: number, y: number, n: number, speed: number, rgb: [number, number, number], life = 1) {
+    burst(x: number, y: number, n: number, speed: number, rgb: RGB, life = 1) {
         for (let k = 0; k < n; k++) {
             const i = this.pn < this.maxP ? this.pn++ : Math.floor(Math.random() * this.maxP);
             const a = Math.random() * Math.PI * 2,
@@ -420,6 +468,128 @@ export class View {
         }
         if (n > 30) this.shake = Math.max(this.shake, n / 80);
     }
+
+    /**
+     * Voxel explosion. big = ship / reactor death; small = turret or fuel cell. Layers: a light
+     * flash on the cave walls, a white-hot core of sparks, amber and red sparks, sparks in the
+     * planet's neon colour, two shockwave rings (neon, then amber), and tumbling cubes: most are
+     * embers that cool white → amber → red → soot, the rest are hull-grey and neon chunks.
+     */
+    explode(x: number, y: number, big: boolean) {
+        const k = big ? 1 : 0.45;
+        this.flash.position.set(x, y, 4);
+        this.flash.intensity = Math.max(this.flash.intensity, big ? 900 : 260);
+        this.burst(x, y, Math.round(60 * k), 18 * k + 4, C.fx.sparkCore, 0.35);
+        this.burst(x, y, Math.round(90 * k), 12 * k + 3, C.fx.sparkAmber, 1.2);
+        this.burst(x, y, Math.round(50 * k), 7 * k + 2, C.fx.sparkRed, 1.8);
+        this.burst(x, y, Math.round(40 * k), 10 * k + 3, this.neon, 1.1);
+        this.ring(x, y, big ? 9 : 4, 0.55, this.neon);
+        this.ring(x, y, big ? 5.5 : 2.5, 0.8, C.fx.ringHot);
+        const [nr, ng, nb] = this.neon;
+        const pieces = big ? 70 : 22;
+        for (let n = 0; n < pieces; n++) {
+            const i = this.dn < MAX_DEBRIS ? this.dn++ : Math.floor(Math.random() * MAX_DEBRIS);
+            const a = Math.random() * Math.PI * 2,
+                v = (big ? 4 : 2.5) + Math.random() * (big ? 11 : 6);
+            this.dPos.set([x, y, (Math.random() - 0.5) * 1.2], i * 3);
+            this.dVel.set([Math.cos(a) * v, Math.sin(a) * v + 3, (Math.random() - 0.5) * 6], i * 3);
+            this.dRot.set([Math.random() * 6, Math.random() * 6, Math.random() * 6], i * 3);
+            this.dSpin.set([(Math.random() - 0.5) * 16, (Math.random() - 0.5) * 16, (Math.random() - 0.5) * 16], i * 3);
+            const life = 1.2 + Math.random() * (big ? 2 : 1);
+            this.dLife.set([life, life], i * 2);
+            this.dSize[i] = 0.12 + Math.random() * (big ? 0.3 : 0.18);
+            const kind = Math.random();
+            this.dTint.set(kind < 0.62 ? [0, 0, 0] : kind < 0.82 ? C.fx.debrisHull : [nr, ng, nb], i * 3);
+        }
+        this.shake = Math.max(this.shake, big ? 1.6 : 0.5);
+    }
+
+    private ring(x: number, y: number, size: number, life: number, rgb: RGB) {
+        const r = this.rings.reduce((a, b) => (a.life < b.life ? a : b));
+        r.mesh.position.set(x, y, 0.6);
+        (r.mesh.material as THREE.MeshBasicMaterial).color.setRGB(...rgb);
+        Object.assign(r, { life, max: life, size });
+        r.mesh.visible = true;
+    }
+
+    private updateExplosions(dt: number, lv: Level) {
+        this.flash.intensity *= Math.exp(-dt * 7);
+        for (const r of this.rings) {
+            if (!r.mesh.visible) continue;
+            r.life -= dt;
+            if (r.life <= 0) {
+                r.mesh.visible = false;
+                continue;
+            }
+            const t = 1 - r.life / r.max;
+            const sc = 0.3 + r.size * (1 - (1 - t) * (1 - t));
+            r.mesh.scale.set(sc, sc, sc);
+            (r.mesh.material as THREE.MeshBasicMaterial).opacity = (1 - t) * (1 - t);
+        }
+
+        const m = this.tmpM,
+            q = this.tmpQ,
+            e = this.tmpE,
+            p = this.tmpP,
+            sc = this.tmpS,
+            c = this.tmpC;
+        let live = 0;
+        for (let i = 0; i < this.dn; i++) {
+            if ((this.dLife[i * 2] -= dt) <= 0) continue;
+            // Integrate with gravity; bounce off rock, losing energy, so chunks skitter along floors.
+            const i3 = i * 3;
+            this.dVel[i3 + 1] -= lv.gravity * 1.6 * dt;
+            const nx = this.dPos[i3] + this.dVel[i3] * dt,
+                ny = this.dPos[i3 + 1] + this.dVel[i3 + 1] * dt;
+            if (solidAt(lv, this.dPos[i3], ny)) {
+                this.dVel[i3 + 1] *= -0.4;
+                this.dVel[i3] *= 0.7;
+                this.dSpin[i3] *= 0.6;
+            } else this.dPos[i3 + 1] = ny;
+            if (solidAt(lv, nx, this.dPos[i3 + 1])) this.dVel[i3] *= -0.4;
+            else this.dPos[i3] = nx;
+            this.dPos[i3 + 2] += this.dVel[i3 + 2] * dt;
+            for (let a = 0; a < 3; a++) this.dRot[i3 + a] += this.dSpin[i3 + a] * dt;
+
+            const t = this.dLife[i * 2] / this.dLife[i * 2 + 1]; // 1 → 0
+            const tr = this.dTint[i3],
+                tg = this.dTint[i3 + 1],
+                tb = this.dTint[i3 + 2];
+            if (tr + tg + tb === 0) c.setRGB(...ramp(C.ember, t, this.tmpRgb));
+            // Ember: white-hot → amber → red → soot (COLORS.ember).
+            else c.setRGB(tr * (0.35 + t), tg * (0.35 + t), tb * (0.35 + t));
+            const s = this.dSize[i] * Math.min(1, t * 4);
+            m.compose(
+                p.set(this.dPos[i3], this.dPos[i3 + 1], this.dPos[i3 + 2]),
+                q.setFromEuler(e.set(this.dRot[i3], this.dRot[i3 + 1], this.dRot[i3 + 2])),
+                sc.set(s, s, s),
+            );
+            if (live !== i) {
+                this.dPos.copyWithin(live * 3, i3, i3 + 3);
+                this.dVel.copyWithin(live * 3, i3, i3 + 3);
+                this.dRot.copyWithin(live * 3, i3, i3 + 3);
+                this.dSpin.copyWithin(live * 3, i3, i3 + 3);
+                this.dTint.copyWithin(live * 3, i3, i3 + 3);
+                this.dLife.copyWithin(live * 2, i * 2, i * 2 + 2);
+                this.dSize[live] = this.dSize[i];
+            }
+            this.debris.setMatrixAt(live, m);
+            this.debris.setColorAt(live, c);
+            live++;
+        }
+        this.dn = live;
+        this.debris.count = live;
+        this.debris.instanceMatrix.needsUpdate = true;
+        if (this.debris.instanceColor) this.debris.instanceColor.needsUpdate = true;
+    }
+
+    private tmpM = new THREE.Matrix4();
+    private tmpQ = new THREE.Quaternion();
+    private tmpE = new THREE.Euler();
+    private tmpP = new THREE.Vector3();
+    private tmpS = new THREE.Vector3();
+    private tmpC = new THREE.Color();
+    private tmpRgb: RGB = [0, 0, 0];
 
     sync(g: Game, dt: number) {
         const lv = g.level;
@@ -444,7 +614,7 @@ export class View {
             const dx = Math.sin(s.a),
                 dy = -Math.cos(s.a);
             for (let k = 0; k < 2; k++) {
-                this.burst(s.x + dx * 0.6, s.y + dy * 0.6, 1, 2, [3, 1.2, 0.3], 0.35);
+                this.burst(s.x + dx * 0.6, s.y + dy * 0.6, 1, 2, C.fx.exhaust, 0.35);
                 const i = this.pn - 1;
                 this.pv[i * 2] += s.vx + dx * 9;
                 this.pv[i * 2 + 1] += s.vy + dy * 9;
@@ -476,12 +646,15 @@ export class View {
             : g.stun > 0
               ? 0.2
               : 0.7 + 0.3 * Math.sin(this.time * 3);
+        const [base, swing] = crit
+            ? [C.fixture.reactorCriticalBase, C.fixture.reactorCriticalSwing]
+            : [C.fixture.reactorCoreBase, C.fixture.reactorCoreSwing];
         (this.reactorCore.material as THREE.MeshBasicMaterial).color.setRGB(
-            3 * pulse + 0.4,
-            crit ? 0.1 : 1.2 * pulse,
-            0.2,
+            base[0] + swing[0] * pulse,
+            base[1] + swing[1] * pulse,
+            base[2] + swing[2] * pulse,
         );
-        this.reactorLight.color.set(crit ? 0xff2010 : 0xff7a30);
+        this.reactorLight.color.set(crit ? C.light.reactorCritical : C.light.reactor);
         this.reactorLight.intensity = 20 + 60 * pulse;
         this.reactor.visible = !(crit && g.critical === 0);
         if (crit) this.shake = Math.max(this.shake, 0.15);
@@ -493,11 +666,13 @@ export class View {
         for (let k = 0; k < nb; k++) {
             const b = g.bullets[k];
             bp.set([b.x, b.y, 0.4], k * 3);
-            bc.set(b.enemy ? [3, 0.8, 0.2] : [1.5, 2.5, 3], k * 3);
+            bc.set(b.enemy ? C.bullet.enemy : C.bullet.player, k * 3);
         }
         this.bullets.geometry.attributes.position.needsUpdate = true;
         this.bullets.geometry.attributes.color.needsUpdate = true;
         this.bullets.geometry.setDrawRange(0, nb);
+
+        this.updateExplosions(dt, lv);
 
         // Particles: integrate, fade, compact the dead ones away.
         const pos = this.sparks.geometry.attributes.position.array as Float32Array;

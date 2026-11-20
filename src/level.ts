@@ -9,7 +9,7 @@
  *   asks of rock: "is this point solid?" and "can A see B?".
  *
  * Operations
- *   - rng(seed): mulberry32 PRNG; every random choice in generation comes from it.
+ *   - Every random choice in generation comes from rng(seed) (random.ts).
  *   - generateLevel(n): fill with rock → carve the surface (two-sine heightline) → carve the
  *     chamber (ellipse, refilled below floorY and cleared above, so the floor is flat) → carve
  *     the shaft (waypoints alternating left/right, joined by strokes of discs whose radius
@@ -36,6 +36,9 @@
  * See also: game.ts, view.ts (build), scripts/check.ts; DESIGN.md "4. Coordinate system" and
  * "5. Level generation".
  */
+import { planetName } from './names';
+import { rng } from './random';
+
 export interface Pt {
     x: number;
     y: number;
@@ -62,18 +65,66 @@ export interface Level {
     turrets: Turret[];
     fuel: FuelCell[];
     exitY: number;
+    name: string; // single-word planet name (names.ts)
+    diff: Difficulty;
 }
 
-export function rng(seed: number): () => number {
-    let a = seed >>> 0;
-    return () => {
-        a = (a + 0x6d2b79f5) >>> 0;
-        let t = a;
-        t = Math.imul(t ^ (t >>> 15), t | 1);
-        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+/**
+ * Every difficulty knob, as a function of planet number. Planet 1 is roomy and gentle; the curve
+ * eases in (t^1.2, so the early planets stay friendly) and reaches full difficulty at
+ * planet MAX_DIFFICULTY_AT, then holds there. "Harder" means heavier gravity and more, faster,
+ * sharper-shooting turrets; "more complex" means a deeper planet with more switchbacks, dead-end
+ * side passages, loops (alternate routes), open caverns and tighter, more wobbly tunnels.
+ */
+export interface Difficulty {
+    t: number; // 0 (planet 1) .. 1 (planet MAX_DIFFICULTY_AT = 50 and beyond), after easing
+    gravity: number;
+    depth: number; // rows of planet below the sky
+    turns: number; // shaft switchbacks
+    radius: number; // base tunnel radius
+    minRadius: number; // tunnels never pinch below this
+    wobble: number; // radius wobble amplitude
+    pocket: number; // chance of a side pocket at each switchback
+    branches: number; // dead-end side passages
+    loops: number; // alternate routes rejoining the shaft
+    caverns: number; // open caverns along the shaft
+    turrets: number;
+    fuelCells: number;
+    reactorHp: number;
+    turretInterval: number; // mean seconds between shots
+    turretRange: number;
+    bulletSpeed: number;
+    aimSpread: number; // radians of random aim error
+}
+
+export const MAX_DIFFICULTY_AT = 50;
+
+export function difficulty(n: number): Difficulty {
+    const t = Math.min(1, Math.max(0, (n - 1) / (MAX_DIFFICULTY_AT - 1))) ** 1.2;
+    const L = (a: number, b: number) => a + (b - a) * t;
+    const R = (a: number, b: number) => Math.round(L(a, b));
+    return {
+        t,
+        gravity: L(2.4, 7.2),
+        depth: R(80, 250),
+        turns: R(2, 9),
+        radius: L(5.4, 3.5),
+        minRadius: L(4.2, 3.0),
+        wobble: L(0.6, 1.6),
+        pocket: L(0.3, 0.7),
+        branches: R(0, 5),
+        loops: R(0, 2),
+        caverns: R(0, 3),
+        turrets: R(2, 22),
+        fuelCells: R(3, 7),
+        reactorHp: R(8, 30),
+        turretInterval: L(4.5, 1.1),
+        turretRange: L(20, 32),
+        bulletSpeed: L(7, 15),
+        aimSpread: L(0.4, 0.08),
     };
 }
+
 
 export function solidAt(lv: Level, x: number, y: number): boolean {
     if (y >= lv.h) return false;
@@ -95,9 +146,10 @@ export const WALL = 3;
 
 export function generateLevel(n: number): Level {
     const r = rng(n * 7919 + 1337);
+    const diff = difficulty(n);
     const w = 96;
     const sky = 34;
-    const h = Math.min(120 + 22 * n, 280) + sky;
+    const h = diff.depth + sky;
     const grid = new Uint8Array(w * h).fill(1);
     const set = (x: number, y: number, v: number) => {
         if (x >= WALL && x < w - WALL && y >= 2 && y < h) grid[y * w + x] = v;
@@ -131,7 +183,7 @@ export function generateLevel(n: number): Level {
 
     // Shaft: waypoints alternating sides from the entrance down to the chamber.
     const ex = Math.round(18 + r() * (w - 36));
-    const steps = Math.min(3 + n, 10);
+    const steps = diff.turns;
     const top = surface[ex] + 2;
     const bottom = floorY + 22;
     const pts: Pt[] = [{ x: ex, y: top }];
@@ -142,20 +194,50 @@ export function generateLevel(n: number): Level {
         pts.push({ x: x * w, y: top - 8 - ((top - 8 - bottom) * i) / steps });
     }
     pts.push({ x: cx, y: floorY + 6 });
-    const rBase = Math.max(2.9, 4.4 - n * 0.15);
-    for (let i = 0; i < pts.length - 1; i++) {
-        const a = pts[i],
-            b = pts[i + 1];
-        const len = Math.hypot(b.x - a.x, b.y - a.y);
+    /** Carve a tunnel from a to b: discs every 0.5 units, radius wobbling but never below minRadius. */
+    const stroke = (a: Pt, b: Pt, radius: number, phase: number) => {
+        const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
         for (let t = 0; t <= len; t += 0.5) {
             const k = t / len;
-            const rad = Math.max(2.7, rBase + 1.1 * Math.sin(t * 0.35 + i * 1.7));
+            const rad = Math.max(diff.minRadius, radius + diff.wobble * Math.sin(t * 0.35 + phase));
             carve(a.x + (b.x - a.x) * k, a.y + (b.y - a.y) * k, rad, rad);
         }
-        if (i > 0 && r() < 0.6) {
-            const dir = a.x < w / 2 ? -1 : 1;
-            carve(a.x + dir * 7, a.y - 1, 6, 3.2);
+    };
+    for (let i = 0; i < pts.length - 1; i++) {
+        stroke(pts[i], pts[i + 1], diff.radius, i * 1.7);
+        if (i > 0 && r() < diff.pocket) carve(pts[i].x + (pts[i].x < w / 2 ? -7 : 7), pts[i].y - 1, 6, 3.2);
+    }
+    const mid = pts.slice(1, -1); // switchback points (not the entrance or the chamber)
+    const anyMid = () => mid[Math.floor(r() * mid.length)];
+    // Caverns: open halls on the shaft.
+    for (let k = 0; k < diff.caverns && mid.length; k++) {
+        const p = anyMid();
+        carve(p.x, p.y, 9 + r() * 5, 5 + r() * 3);
+    }
+    // Loops: a second route from switchback i to i + 2 via the opposite side of the planet.
+    for (let k = 0; k < diff.loops && pts.length > 3; k++) {
+        const i = Math.floor(r() * (pts.length - 3));
+        const a = pts[i],
+            b = pts[i + 2];
+        const via = { x: Math.min(w - 12, Math.max(12, w - (a.x + b.x) / 2)), y: (a.y + b.y) / 2 };
+        stroke(a, via, diff.radius * 0.85, k * 2.3);
+        stroke(via, b, diff.radius * 0.85, k * 3.1);
+    }
+    // Branches: winding dead-end passages off a switchback, ending in a pocket.
+    for (let k = 0; k < diff.branches && mid.length; k++) {
+        let p = anyMid();
+        let ang = (r() < 0.5 ? 0 : Math.PI) + (r() - 0.5) * 0.9;
+        const segs = 3 + Math.floor(r() * 3);
+        for (let s = 0; s < segs; s++) {
+            const q = {
+                x: Math.min(w - 8, Math.max(8, p.x + Math.cos(ang) * 7)),
+                y: Math.min(h - sky - 8, Math.max(14, p.y + Math.sin(ang) * 7)),
+            };
+            stroke(p, q, diff.radius * 0.8, k + s);
+            p = q;
+            ang += (r() - 0.5) * 1.4;
         }
+        carve(p.x, p.y, 4.5, 3);
     }
 
     const solid = (x: number, y: number) => x < 0 || x >= w || y < 0 || (y < h && grid[y * w + x] === 1);
@@ -193,13 +275,13 @@ export function generateLevel(n: number): Level {
         return out;
     };
 
-    const turretCount = Math.min(3 + 2 * n, 22);
+    const turretCount = diff.turrets;
     const nf = Math.ceil(turretCount * 0.65);
     const turrets: Turret[] = [
         ...pick(floors, nf, 10, base + 6).map((p) => ({ ...p, y: p.y + 0.45, up: true })),
         ...pick(ceilings, turretCount - nf, 10, base - 2).map((p) => ({ ...p, y: p.y - 0.45, up: false })),
     ].map((t) => ({ ...t, alive: true, cooldown: 1 + r() * 3 }));
-    const fuel = pick(floors, 2 + Math.ceil(n / 2), 9, base - 4).map((p) => ({ x: p.x, y: p.y + 0.5, amount: 35 }));
+    const fuel = pick(floors, diff.fuelCells, 9, base - 4).map((p) => ({ x: p.x, y: p.y + 0.5, amount: 35 }));
 
     return {
         n,
@@ -207,13 +289,15 @@ export function generateLevel(n: number): Level {
         h,
         grid,
         surface,
-        gravity: Math.min(3.2 + 0.45 * n, 8),
+        gravity: diff.gravity,
         start,
         pod,
         reactor,
-        reactorHp: 10 + 2 * n,
+        reactorHp: diff.reactorHp,
         turrets,
         fuel,
         exitY: h - 3,
+        name: planetName(n),
+        diff,
     };
 }

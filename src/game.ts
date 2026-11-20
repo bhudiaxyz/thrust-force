@@ -171,7 +171,7 @@ export class Game {
         this.stun = 0;
         this.pod = { ...this.level.pod, vx: 0, vy: 0, attached: false, len: CFG.rodLen };
         this.respawn();
-        this.say(`Planet ${n} — gravity ${this.level.gravity.toFixed(1)}`, 3);
+        this.say(`Planet ${n}: ${this.level.name} — gravity ${this.level.gravity.toFixed(1)}`, 3);
     }
 
     respawn() {
@@ -316,13 +316,13 @@ export class Game {
         if (this.stun <= 0) {
             for (const tu of lv.turrets) {
                 if (!tu.alive || (tu.cooldown -= h) > 0) continue;
-                tu.cooldown = Math.max(0.9, 3.2 - 0.2 * lv.n) * (0.7 + Math.random() * 0.6);
+                tu.cooldown = lv.diff.turretInterval * (0.7 + Math.random() * 0.6);
                 const dx = s.x - tu.x,
                     dy = s.y - tu.y;
                 const d = Math.hypot(dx, dy);
-                if (d > 30 || (tu.up ? dy < -0.5 : dy > 0.5) || !lineOfSight(lv, tu, s)) continue;
-                const ang = Math.atan2(dy, dx) + (Math.random() - 0.5) * 0.15;
-                const sp = 10 + lv.n * 0.6;
+                if (d > lv.diff.turretRange || (tu.up ? dy < -0.5 : dy > 0.5) || !lineOfSight(lv, tu, s)) continue;
+                const ang = Math.atan2(dy, dx) + (Math.random() - 0.5) * 2 * lv.diff.aimSpread;
+                const sp = lv.diff.bulletSpeed;
                 this.bullets.push({
                     x: tu.x + Math.cos(ang) * 0.8,
                     y: tu.y + Math.sin(ang) * 0.8,
