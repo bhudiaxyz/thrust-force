@@ -20,6 +20,8 @@
  *   - COLORS: fixed colours grouped by subject (light, ship, pod, fixture, bullet, fx, ember ramp,
  *     rock tiles, minimap, ui).
  *   - ramp(stops, t): samples a colour ramp such as COLORS.ember (cooling debris).
+ *   - evenGlow(rgb): rescales a theme's neon to NEON_LUMA perceived brightness, so every theme
+ *     glows equally under bloom (yellow and green read far brighter than blue at equal values).
  *   - applyUiColors(): writes COLORS.ui into the CSS custom properties that styles.css derives
  *     every UI tint from (via color-mix), so the UI re-themes from here too.
  *
@@ -31,8 +33,8 @@
  * Highlights
  *   - To add a theme, append a PlanetTheme (the cycle length follows the array); to theme by
  *     something other than planet number, change themeFor().
- *   - Keep neon RGB channels around 2–3 for the brightest component: below ~1 they stop
- *     glowing, far above they wash out to white under bloom.
+ *   - Theme neon values set hue only: view.ts passes them through evenGlow(), so their
+ *     brightness is NEON_LUMA whatever is written here.
  *   - styles.css keeps the same values as fallbacks so the splash looks right before JS loads.
  *
  * See also: view.ts, rock.ts, minimap.ts, main.ts, styles.css; DESIGN.md "7.1 Scene and look".
@@ -178,6 +180,16 @@ export const COLORS = {
         stick: 'rgba(102, 224, 255, 0.45)',
     },
 };
+
+/** Perceived brightness every theme's neon is scaled to, so yellows don't out-bloom blues. */
+export const NEON_LUMA = 1.6;
+
+/** Scale an HDR colour so its luma (Rec. 709 weights) is NEON_LUMA, keeping its hue. */
+export function evenGlow(c: RGB): RGB {
+    const luma = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2] || 1;
+    const k = NEON_LUMA / luma;
+    return [c[0] * k, c[1] * k, c[2] * k];
+}
 
 /** Sample a ramp of [t, colour] stops sorted by descending t. */
 export function ramp(stops: [number, RGB][], t: number, out: RGB = [0, 0, 0]): RGB {

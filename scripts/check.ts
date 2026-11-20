@@ -29,7 +29,7 @@
  */
 import assert from 'node:assert/strict';
 import { difficulty, generateLevel, MAX_DIFFICULTY_AT, solidAt, type Difficulty } from '../src/level';
-import { PLANET_THEMES, themeFor } from '../src/palette';
+import { evenGlow, NEON_LUMA, PLANET_THEMES, themeFor } from '../src/palette';
 import { PLANET_NAMES, planetName } from '../src/names';
 import { Game, rod, type Input } from '../src/game';
 import { classifyGpu } from '../src/tier';
@@ -182,6 +182,10 @@ for (let n = 1; n <= 50; n++) {
     const names = new Set(Array.from({ length: PLANET_THEMES.length }, (_, i) => themeFor(i + 1).name));
     assert.equal(names.size, PLANET_THEMES.length);
     assert.equal(themeFor(PLANET_THEMES.length + 1), themeFor(1), 'themes should cycle');
+    for (const t of PLANET_THEMES) {
+        const [r, g, b] = evenGlow(t.neon);
+        assert.ok(Math.abs(0.2126 * r + 0.7152 * g + 0.0722 * b - NEON_LUMA) < 1e-9, `${t.name}: uneven glow`);
+    }
 }
 
 {

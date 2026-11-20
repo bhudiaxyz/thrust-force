@@ -47,7 +47,7 @@ import type { Game } from './game';
 import { solidAt, type Level } from './level';
 import type { TierSettings } from './tier';
 import { BLOCK, blockAt, rockMaterial, TINTLESS, wallMaterial } from './rock';
-import { COLORS, ramp, themeFor, type RGB } from './palette';
+import { COLORS, evenGlow, ramp, themeFor, type RGB } from './palette';
 
 const C = COLORS;
 
@@ -339,9 +339,8 @@ export class View {
         this.levelGroup.add(rock);
 
         // Neon edge strips on the front face.
-        const [nr, ng, nb] = pal.neon;
-        this.neon = [nr, ng, nb];
-        const strips = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), neonMat(pal.neon), bars.length);
+        this.neon = evenGlow(pal.neon);
+        const strips = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), neonMat(this.neon), bars.length);
         const s = new THREE.Vector3(),
             q = new THREE.Quaternion(),
             p = new THREE.Vector3();
