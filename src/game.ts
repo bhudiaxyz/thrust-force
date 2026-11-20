@@ -40,7 +40,7 @@
  * See also: level.ts, main.ts, view.ts, scripts/check.ts; DESIGN.md "6. Game rules and physics"
  * and "15. Tuning reference".
  */
-import { generateLevel, lineOfSight, solidAt, type Level, type Pt } from './level';
+import { generateLevel, lineOfSight, solidAt, type Level, type Pt } from "./level";
 
 export interface Input {
     left: boolean;
@@ -60,20 +60,20 @@ export interface Bullet extends Body {
     enemy: boolean;
 }
 export type GameEvent =
-    | 'shoot'
-    | 'enemyShoot'
-    | 'hit'
-    | 'boom'
-    | 'bigBoom'
-    | 'attach'
-    | 'fuel'
-    | 'land'
-    | 'alarm'
-    | 'critical'
-    | 'complete'
-    | 'extra'
-    | 'gameover';
-export type Phase = 'play' | 'dead' | 'complete' | 'over';
+    | "shoot"
+    | "enemyShoot"
+    | "hit"
+    | "boom"
+    | "bigBoom"
+    | "attach"
+    | "fuel"
+    | "land"
+    | "alarm"
+    | "critical"
+    | "complete"
+    | "extra"
+    | "gameover";
+export type Phase = "play" | "dead" | "complete" | "over";
 
 export const CFG = {
     thrust: 15,
@@ -138,7 +138,7 @@ export class Game {
     score = 0;
     lives = 3;
     fuel = CFG.fuelMax;
-    phase: Phase = 'play';
+    phase: Phase = "play";
     phaseTimer = 0;
     ship = { x: 0, y: 0, vx: 0, vy: 0, a: 0 };
     pod = { x: 0, y: 0, vx: 0, vy: 0, attached: false, len: CFG.rodLen };
@@ -149,7 +149,7 @@ export class Game {
     reactorHp = 0;
     critical = -1; // seconds left, < 0 when the reactor is stable
     stun = 0;
-    message = '';
+    message = "";
     messageTime = 0;
     onEvent: (e: GameEvent, x: number, y: number) => void = () => {};
     private reload = 0;
@@ -180,7 +180,7 @@ export class Game {
         if (this.pod.attached) this.pod = { ...this.level.pod, vx: 0, vy: 0, attached: false, len: CFG.rodLen };
         this.fuel = Math.max(this.fuel, 40);
         this.bullets = [];
-        this.phase = 'play';
+        this.phase = "play";
     }
 
     say(msg: string, t = 2.5) {
@@ -205,17 +205,17 @@ export class Game {
         if (this.score >= this.nextExtra) {
             this.nextExtra += 10000;
             this.lives++;
-            this.say('Extra ship!');
-            this.emit('extra', this.ship);
+            this.say("Extra ship!");
+            this.emit("extra", this.ship);
         }
     }
 
     private die() {
-        if (this.phase !== 'play') return;
-        this.emit('bigBoom', this.ship);
-        if (this.pod.attached) this.emit('boom', this.pod);
+        if (this.phase !== "play") return;
+        this.emit("bigBoom", this.ship);
+        if (this.pod.attached) this.emit("boom", this.pod);
         this.lives--;
-        this.phase = 'dead';
+        this.phase = "dead";
         this.phaseTimer = 2.2;
         this.thrusting = this.shielding = false;
         this.beam = null;
@@ -229,12 +229,12 @@ export class Game {
         this.messageTime -= h;
         this.moveBullets(h);
 
-        if (this.phase !== 'play') {
-            if (this.phase === 'over' || (this.phaseTimer -= h) > 0) return;
-            if (this.phase === 'complete') return this.load(this.levelNo + 1);
+        if (this.phase !== "play") {
+            if (this.phase === "over" || (this.phaseTimer -= h) > 0) return;
+            if (this.phase === "complete") return this.load(this.levelNo + 1);
             if (this.lives <= 0) {
-                this.phase = 'over';
-                this.emit('gameover', s);
+                this.phase = "over";
+                this.emit("gameover", s);
                 return;
             }
             if (this.resetLevel) {
@@ -251,7 +251,7 @@ export class Game {
         this.shielding = inp.shield && this.fuel > 0;
         this.fuel = Math.max(
             0,
-            this.fuel - ((this.thrusting ? CFG.thrustBurn : 0) + (this.shielding ? CFG.shieldBurn : 0)) * h,
+            this.fuel - ((this.thrusting ? CFG.thrustBurn : 0) + (this.shielding ? CFG.shieldBurn : 0)) * h
         );
         const t = this.thrusting ? CFG.thrust : 0;
         s.vx += -Math.sin(s.a) * t * h;
@@ -276,8 +276,8 @@ export class Game {
                 pod.attached = true;
                 pod.vx = pod.vy = 0;
                 pod.len = Math.max(2, dist(s, pod));
-                this.say('Pod locked on — get it out!');
-                this.emit('attach', pod);
+                this.say("Pod locked on — get it out!");
+                this.emit("attach", pod);
             }
             for (const f of lv.fuel) {
                 if (f.amount <= 0 || f.y > s.y || dist(s, f) > 4.5) continue;
@@ -287,7 +287,7 @@ export class Game {
                 this.beam = f;
                 if (f.amount <= 0) {
                     this.addScore(300);
-                    this.emit('fuel', f);
+                    this.emit("fuel", f);
                 }
                 break;
             }
@@ -308,7 +308,7 @@ export class Game {
                 life: 1.4,
                 enemy: false,
             });
-            this.emit('shoot', s);
+            this.emit("shoot", s);
         }
 
         // Turrets.
@@ -331,7 +331,7 @@ export class Game {
                     life: 3,
                     enemy: true,
                 });
-                this.emit('enemyShoot', tu);
+                this.emit("enemyShoot", tu);
             }
         }
 
@@ -340,12 +340,12 @@ export class Game {
             this.critical -= h;
             if (Math.ceil(this.critical) !== this.lastAlarm) {
                 this.lastAlarm = Math.ceil(this.critical);
-                this.emit('alarm', lv.reactor);
+                this.emit("alarm", lv.reactor);
             }
             if (this.critical <= 0) {
                 this.critical = 0;
-                this.emit('bigBoom', lv.reactor);
-                this.say('The planet is gone.');
+                this.emit("bigBoom", lv.reactor);
+                this.say("The planet is gone.");
                 this.die();
                 return;
             }
@@ -358,7 +358,7 @@ export class Game {
             const gentle = Math.hypot(s.vx, s.vy) < 5 && Math.abs(wrap(s.a)) < 0.45 && s.vy <= 0.5;
             if (!gentle || hits[0] || hits[1] || hits[2]) return this.die();
             for (let k = 0; k < 60 && hull(s.x, s.y, s.a).some(([x, y]) => solidAt(lv, x, y)); k++) s.y += 0.02;
-            if (s.vy < -1) this.emit('land', s);
+            if (s.vy < -1) this.emit("land", s);
             s.vy = 0;
             s.vx *= 0.9;
             s.a *= 0.92;
@@ -380,19 +380,19 @@ export class Game {
                 if (this.critical >= 0) bonus += 3000 + 500 * lv.n;
                 this.addScore(bonus);
                 this.say(
-                    `${pod.attached ? 'Pod recovered' : 'Mission complete'}${this.critical >= 0 ? ' — planet destroyed' : ''}  +${bonus}`,
-                    3,
+                    `${pod.attached ? "Pod recovered" : "Mission complete"}${this.critical >= 0 ? " — planet destroyed" : ""}  +${bonus}`,
+                    3
                 );
-                if (this.critical >= 0) this.emit('bigBoom', lv.reactor);
-                this.phase = 'complete';
+                if (this.critical >= 0) this.emit("bigBoom", lv.reactor);
+                this.phase = "complete";
                 this.phaseTimer = 3.2;
                 this.critical = -1;
-                this.emit('complete', s);
+                this.emit("complete", s);
             } else if (s.y > lv.exitY + 2) {
                 s.y = lv.exitY + 2;
                 s.vy = Math.min(s.vy, 0);
                 if ((this.nagTime -= h) <= 0) {
-                    this.say('Recover the pod first');
+                    this.say("Recover the pod first");
                     this.nagTime = 2;
                 }
             }
@@ -407,11 +407,11 @@ export class Game {
             b.y += b.vy * h;
             if ((b.life -= h) <= 0) return false;
             if (solidAt(lv, b.x, b.y)) {
-                this.emit('hit', b);
+                this.emit("hit", b);
                 return false;
             }
             if (b.enemy) {
-                if (this.phase !== 'play' || dist(b, s) > 1) return true;
+                if (this.phase !== "play" || dist(b, s) > 1) return true;
                 if (!this.shielding) this.die();
                 return false;
             }
@@ -419,27 +419,27 @@ export class Game {
                 if (tu.alive && dist(b, tu) < 0.9) {
                     tu.alive = false;
                     this.addScore(750);
-                    this.emit('boom', tu);
+                    this.emit("boom", tu);
                     return false;
                 }
             for (const f of lv.fuel)
                 if (f.amount > 0 && dist(b, f) < 0.8) {
                     f.amount = 0;
                     this.addScore(150);
-                    this.emit('boom', f);
+                    this.emit("boom", f);
                     return false;
                 }
             const r = lv.reactor;
             if (dist(b, { x: r.x, y: r.y + 1 }) < 1.8) {
-                this.emit('hit', b);
+                this.emit("hit", b);
                 if (this.critical < 0) {
                     this.stun = CFG.stun;
                     this.addScore(50);
                     if (--this.reactorHp <= 0) {
                         this.critical = CFG.reactorTime;
                         this.lastAlarm = 0;
-                        this.say('Reactor critical — get out!', 3);
-                        this.emit('critical', r);
+                        this.say("Reactor critical — get out!", 3);
+                        this.emit("critical", r);
                     }
                 }
                 return false;

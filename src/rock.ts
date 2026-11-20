@@ -40,10 +40,10 @@
  *
  * See also: view.ts (build), level.ts (grid, surface); DESIGN.md "7.2 Level meshes".
  */
-import * as THREE from 'three';
-import { isAir, type Level } from './level';
-import { rng } from './random';
-import { COLORS } from './palette';
+import * as THREE from "three";
+import { isAir, type Level } from "./level";
+import { rng } from "./random";
+import { COLORS } from "./palette";
 
 export const BLOCK = { Stone: 0, Cobble: 1, Strata: 2, Gravel: 3, Topsoil: 4, Ore: 5, Crystal: 6, Basalt: 7 };
 const TILES = 8;
@@ -135,7 +135,13 @@ function paintAtlas() {
                         return [Math.hypot(dx, dy), v];
                     })
                     .sort((a, b) => a[0] - b[0]);
-                put(albedo, BLOCK.Cobble, x, y, grey(ds[1][0] - ds[0][0] < 1.3 ? 110 : ds[0][1] - ds[0][0] * 4 + jit(8)));
+                put(
+                    albedo,
+                    BLOCK.Cobble,
+                    x,
+                    y,
+                    grey(ds[1][0] - ds[0][0] < 1.3 ? 110 : ds[0][1] - ds[0][0] * 4 + jit(8))
+                );
             }
     }
 
@@ -165,7 +171,8 @@ function paintAtlas() {
     {
         for (let x = 0; x < S; x++) {
             const crust = 3 + Math.floor(r() * 3) + (r() < 0.2 ? 2 : 0);
-            for (let y = 0; y < S; y++) put(albedo, BLOCK.Topsoil, x, y, grey(y < crust ? 245 + jit(8) : 175 + jit(20)));
+            for (let y = 0; y < S; y++)
+                put(albedo, BLOCK.Topsoil, x, y, grey(y < crust ? 245 + jit(8) : 175 + jit(20)));
         }
         for (let k = 0; k < 8; k++) put(albedo, BLOCK.Topsoil, Math.floor(r() * S), 7 + Math.floor(r() * 9), grey(120));
     }
@@ -198,9 +205,16 @@ function paintAtlas() {
                 for (let x = -rad; x <= rad; x++) {
                     const d = Math.abs(x) + Math.abs(y);
                     if (d > rad) continue;
-                    const c: RGB = d === rad ? COLORS.rock.crystalEdge : x < 0 ? COLORS.rock.crystalLit : COLORS.rock.crystalFace;
+                    const c: RGB =
+                        d === rad ? COLORS.rock.crystalEdge : x < 0 ? COLORS.rock.crystalLit : COLORS.rock.crystalFace;
                     put(albedo, BLOCK.Crystal, cx + x, cy + y, c);
-                    put(glow, BLOCK.Crystal, cx + x, cy + y, d === rad ? COLORS.rock.crystalGlowEdge : COLORS.rock.crystalGlow);
+                    put(
+                        glow,
+                        BLOCK.Crystal,
+                        cx + x,
+                        cy + y,
+                        d === rad ? COLORS.rock.crystalGlowEdge : COLORS.rock.crystalGlow
+                    );
                 }
     }
 
@@ -220,10 +234,10 @@ function paintAtlas() {
 }
 
 function texture(img: ImageData, repeat = false) {
-    const c = document.createElement('canvas');
+    const c = document.createElement("canvas");
     c.width = img.width;
     c.height = img.height;
-    c.getContext('2d')!.putImageData(img, 0, 0);
+    c.getContext("2d")!.putImageData(img, 0, 0);
     const t = new THREE.CanvasTexture(c);
     t.colorSpace = THREE.SRGBColorSpace;
     t.magFilter = t.minFilter = THREE.NearestFilter;
@@ -239,7 +253,10 @@ function getAtlas() {
     // The back wall's texture: the Stone tile cut out on its own so it can repeat.
     const stone = new ImageData(S, S);
     for (let y = 0; y < S; y++)
-        stone.data.set(albedo.data.subarray((y * TILES * S + BLOCK.Stone * S) * 4, (y * TILES * S + (BLOCK.Stone + 1) * S) * 4), y * S * 4);
+        stone.data.set(
+            albedo.data.subarray((y * TILES * S + BLOCK.Stone * S) * 4, (y * TILES * S + (BLOCK.Stone + 1) * S) * 4),
+            y * S * 4
+        );
     atlas = { map: texture(albedo), glow: texture(glow), stone: texture(stone, true) };
     return atlas;
 }
@@ -264,29 +281,35 @@ export function rockMaterial(bump: boolean) {
     mat.customProgramCacheKey = () => `rock-${bump}`;
     mat.onBeforeCompile = (sh) => {
         sh.vertexShader = sh.vertexShader
-            .replace('#include <common>', '#include <common>\nattribute float aTile;\nvarying float vTile;\nvarying vec2 vLocal;')
             .replace(
-                '#include <uv_vertex>',
+                "#include <common>",
+                "#include <common>\nattribute float aTile;\nvarying float vTile;\nvarying vec2 vLocal;"
+            )
+            .replace(
+                "#include <uv_vertex>",
                 `#include <uv_vertex>
                 vTile = aTile;
                 vec3 lp = position + vec3(0.5, 0.5, 1.5);
-                vLocal = abs(normal.z) > 0.5 ? lp.xy : abs(normal.x) > 0.5 ? lp.zy : lp.xz;`,
+                vLocal = abs(normal.z) > 0.5 ? lp.xy : abs(normal.x) > 0.5 ? lp.zy : lp.xz;`
             );
         sh.fragmentShader = sh.fragmentShader
             .replace(
-                '#include <common>',
+                "#include <common>",
                 `#include <common>
                 varying float vTile;
                 varying vec2 vLocal;
-                vec2 tileUv() { return vec2((fract(vLocal.x) + vTile) / ${TILES}.0, fract(vLocal.y)); }`,
+                vec2 tileUv() { return vec2((fract(vLocal.x) + vTile) / ${TILES}.0, fract(vLocal.y)); }`
             )
-            .replace('#include <map_fragment>', 'diffuseColor *= texture2D(map, tileUv());')
-            .replace('#include <emissivemap_fragment>', 'totalEmissiveRadiance *= texture2D(emissiveMap, tileUv()).rgb;')
+            .replace("#include <map_fragment>", "diffuseColor *= texture2D(map, tileUv());")
+            .replace(
+                "#include <emissivemap_fragment>",
+                "totalEmissiveRadiance *= texture2D(emissiveMap, tileUv()).rgb;"
+            )
             // Bump: sample the atlas through tileUv(), but take screen-space derivatives from the
             // continuous vLocal (scaled to atlas units) so fract() wrap-arounds aren't seen as
             // cliffs in the height field.
             .replace(
-                '#include <bumpmap_pars_fragment>',
+                "#include <bumpmap_pars_fragment>",
                 `#ifdef USE_BUMPMAP
                 uniform sampler2D bumpMap;
                 uniform float bumpScale;
@@ -299,7 +322,7 @@ export function rockMaterial(bump: boolean) {
                     float dBy = bumpScale * texture2D(bumpMap, uv + dSTdy).x - Hll;
                     return vec2(dBx, dBy);
                 }
-                ${THREE.ShaderChunk.bumpmap_pars_fragment.slice(THREE.ShaderChunk.bumpmap_pars_fragment.indexOf('vec3 perturbNormalArb'))}`,
+                ${THREE.ShaderChunk.bumpmap_pars_fragment.slice(THREE.ShaderChunk.bumpmap_pars_fragment.indexOf("vec3 perturbNormalArb"))}`
             );
     };
     return mat;

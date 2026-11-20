@@ -38,38 +38,38 @@
  * See also: game.ts, view.ts, input.ts, hud.ts, minimap.ts, tier.ts, audio.ts, index.html;
  * DESIGN.md "9. Input", "10. UI", "12. Frame loop".
  */
-import './styles.css';
-import { Game, type GameEvent } from './game';
-import { View } from './view';
-import { Minimap } from './minimap';
-import { drawHud } from './hud';
-import { clearInput, HELP, isTouch, setupInput, steer } from './input';
-import { applyUiColors, COLORS, type RGB } from './palette';
-import { detectTier, TIER_SETTINGS } from './tier';
-import { sfx, setEngine, toggleMute, unlock, isMuted, suspendAudio } from './audio';
+import "./styles.css";
+import { Game, type GameEvent } from "./game";
+import { View } from "./view";
+import { Minimap } from "./minimap";
+import { drawHud } from "./hud";
+import { clearInput, HELP, isTouch, setupInput, steer } from "./input";
+import { applyUiColors, COLORS, type RGB } from "./palette";
+import { detectTier, TIER_SETTINGS } from "./tier";
+import { sfx, setEngine, toggleMute, unlock, isMuted, suspendAudio } from "./audio";
 
 const $ = (id: string) => document.getElementById(id)!;
-const boot = $('boot'),
-    pauseEl = $('pause'),
-    hud = $('hud');
+const boot = $("boot"),
+    pauseEl = $("pause"),
+    hud = $("hud");
 applyUiColors();
 setupInput();
 
-document.querySelector('#pause .bindings')!.innerHTML = HELP.map(
-    ([k, v]) => `<div class="binding"><kbd>${k}</kbd><span>${v}</span></div>`,
-).join('');
-document.querySelector('.ls-controls')!.textContent = HELP.slice(0, 4)
+document.querySelector("#pause .bindings")!.innerHTML = HELP.map(
+    ([k, v]) => `<div class="binding"><kbd>${k}</kbd><span>${v}</span></div>`
+).join("");
+document.querySelector(".ls-controls")!.textContent = HELP.slice(0, 4)
     .map(([k, v]) => `${k} ${v}`)
-    .join('   ·   ');
-document.querySelector('.ls-enter')!.textContent = isTouch ? 'Tap to launch' : 'Click or press Enter to launch';
+    .join("   ·   ");
+document.querySelector(".ls-enter")!.textContent = isTouch ? "Tap to launch" : "Click or press Enter to launch";
 
 let view: View;
-const minimap = new Minimap($('minimap'));
+const minimap = new Minimap($("minimap"));
 let attract: Game;
 let game: Game | null = null;
 let paused = false;
 let ready = false;
-let best = Number(localStorage.getItem('tf-best') ?? 0);
+let best = Number(localStorage.getItem("tf-best") ?? 0);
 
 // Small one-colour bursts per event; explosions get the full layered treatment (View.explode).
 const BURSTS: Partial<Record<GameEvent, [count: number, speed: number, rgb: RGB, life: number]>> = {
@@ -81,10 +81,10 @@ const BURSTS: Partial<Record<GameEvent, [count: number, speed: number, rgb: RGB,
 
 function onEvent(e: GameEvent, x: number, y: number) {
     sfx[e]?.();
-    if (e === 'bigBoom' || e === 'boom') view.explode(x, y, e === 'bigBoom');
+    if (e === "bigBoom" || e === "boom") view.explode(x, y, e === "bigBoom");
     const b = BURSTS[e];
     if (b) view.burst(x, y, ...b);
-    if (e === 'gameover') setPause(true);
+    if (e === "gameover") setPause(true);
 }
 
 function start() {
@@ -93,73 +93,73 @@ function start() {
     game.onEvent = onEvent;
     setPause(false);
     hud.hidden = false;
-    $('minimap').hidden = false;
-    if (!boot.classList.contains('dismissed')) {
-        boot.classList.add('dismissed');
-        setTimeout(() => boot.classList.add('gone'), 700);
+    $("minimap").hidden = false;
+    if (!boot.classList.contains("dismissed")) {
+        boot.classList.add("dismissed");
+        setTimeout(() => boot.classList.add("gone"), 700);
     }
 }
 
 function setPause(open: boolean) {
-    const over = !!game && game.phase === 'over';
+    const over = !!game && game.phase === "over";
     if (game && game.score > best) {
         best = game.score;
-        localStorage.setItem('tf-best', String(best));
+        localStorage.setItem("tf-best", String(best));
     }
     paused = open;
-    pauseEl.dataset.kind = over ? 'over' : 'pause';
-    $('pause-title').textContent = over ? 'Mission over' : 'Paused';
-    document.querySelector('#pause .p-score')!.textContent = game
+    pauseEl.dataset.kind = over ? "over" : "pause";
+    $("pause-title").textContent = over ? "Mission over" : "Paused";
+    document.querySelector("#pause .p-score")!.textContent = game
         ? `Score ${game.score.toLocaleString()} · Planet ${game.levelNo}: ${game.level.name} · Best ${best.toLocaleString()}`
-        : '';
-    $('pause-mute').querySelector('span')!.textContent = `Sound ${isMuted() ? 'off' : 'on'}`;
-    pauseEl.classList.toggle('open', open);
+        : "";
+    $("pause-mute").querySelector("span")!.textContent = `Sound ${isMuted() ? "off" : "on"}`;
+    pauseEl.classList.toggle("open", open);
     wake();
-    if (open) (over ? $('pause-restart') : $('pause-resume')).focus({ preventScroll: true });
+    if (open) (over ? $("pause-restart") : $("pause-resume")).focus({ preventScroll: true });
     else unlock();
 }
 
 // ---- Commands ---------------------------------------------------------------------------------
 
-addEventListener('keydown', (e) => {
+addEventListener("keydown", (e) => {
     if (e.repeat) return;
     if (!game) {
-        if (ready && (e.code === 'Enter' || e.code === 'Space')) start();
+        if (ready && (e.code === "Enter" || e.code === "Space")) start();
         return;
     }
-    const over = game.phase === 'over';
-    if (e.code === 'Escape' || e.code === 'KeyP') {
+    const over = game.phase === "over";
+    if (e.code === "Escape" || e.code === "KeyP") {
         if (!over) setPause(!paused);
-    } else if ((e.code === 'KeyR' && paused) || (e.code === 'Enter' && over)) start();
-    else if (e.code === 'KeyN') minimap.toggle();
-    else if (e.code === 'KeyM') {
+    } else if ((e.code === "KeyR" && paused) || (e.code === "Enter" && over)) start();
+    else if (e.code === "KeyN") minimap.toggle();
+    else if (e.code === "KeyM") {
         toggleMute();
         if (paused) setPause(true);
     }
 });
-boot.addEventListener('click', () => ready && !game && start());
-$('pause-resume').addEventListener('click', () => setPause(false));
-$('pause-restart').addEventListener('click', start);
-$('pause-mute').addEventListener('click', () => {
+boot.addEventListener("click", () => ready && !game && start());
+$("pause-resume").addEventListener("click", () => setPause(false));
+$("pause-restart").addEventListener("click", start);
+$("pause-mute").addEventListener("click", () => {
     toggleMute();
     setPause(true);
 });
-pauseEl.addEventListener('click', (e) => {
-    if (e.target === pauseEl && game?.phase !== 'over') setPause(false);
+pauseEl.addEventListener("click", (e) => {
+    if (e.target === pauseEl && game?.phase !== "over") setPause(false);
 });
-$('t-pause').addEventListener('click', () => {
-    if (game && game.phase !== 'over') setPause(true);
+$("t-pause").addEventListener("click", () => {
+    if (game && game.phase !== "over") setPause(true);
 });
 
 // Any input or resize wakes an idle loop; losing focus or hiding the tab pauses the game.
-for (const ev of ['keydown', 'pointerdown', 'pointermove', 'wheel', 'resize'] as const)
+for (const ev of ["keydown", "pointerdown", "pointermove", "wheel", "resize"] as const)
     addEventListener(ev, wake, { passive: true });
-addEventListener('blur', () => {
+addEventListener("blur", () => {
     clearInput();
-    if (game && game.phase !== 'over') setPause(true);
+    if (game && game.phase !== "over") setPause(true);
 });
-document.addEventListener('visibilitychange', () => {
-    if (document.hidden && game && game.phase !== 'over' && !paused) setPause(true);
+document.addEventListener("visibilitychange", () => {
+    if (document.hidden && game && game.phase !== "over" && !paused) setPause(true);
 });
 
 // ---- Frame loop + idle ------------------------------------------------------------------------
@@ -198,7 +198,7 @@ function frame(now: number) {
         }
         govern(now, game);
     }
-    setEngine(!!game && active && game.thrusting && game.phase === 'play');
+    setEngine(!!game && active && game.thrusting && game.phase === "play");
     view.sync(game ?? attract, paused ? 0 : dt);
 }
 
@@ -232,18 +232,18 @@ function govern(now: number, g: Game) {
 
 // ---- Boot -------------------------------------------------------------------------------------
 
-const bar = document.querySelector<HTMLElement>('.ls-bar span')!,
-    tip = document.querySelector('.ls-tip')!;
-const STEPS = ['Igniting engines', 'Charting planet 1', 'Building caves', 'Warming shaders'];
+const bar = document.querySelector<HTMLElement>(".ls-bar span")!,
+    tip = document.querySelector(".ls-tip")!;
+const STEPS = ["Igniting engines", "Charting planet 1", "Building caves", "Warming shaders"];
 const step = async (i: number) => {
     tip.textContent = `${STEPS[i]}…`;
     bar.style.width = `${((i + 1) / STEPS.length) * 100}%`;
     await new Promise(requestAnimationFrame);
 };
 const fail = (msg: string) => {
-    boot.classList.remove('ready', 'dismissed', 'gone');
-    const sub = document.querySelector('.ls-sub')!;
-    sub.classList.add('error');
+    boot.classList.remove("ready", "dismissed", "gone");
+    const sub = document.querySelector(".ls-sub")!;
+    sub.classList.add("error");
     sub.textContent = msg;
 };
 
@@ -251,10 +251,12 @@ const fail = (msg: string) => {
     try {
         await step(0);
         const tier = detectTier();
-        if (tier === 'none')
-            return fail('This browser or device has no WebGL2, which Thrust Force needs. Try a current Chrome, Edge, Firefox or Safari.');
+        if (tier === "none")
+            return fail(
+                "This browser or device has no WebGL2, which Thrust Force needs. Try a current Chrome, Edge, Firefox or Safari."
+            );
         document.documentElement.dataset.tier = tier;
-        view = new View($('app'), TIER_SETTINGS[tier]);
+        view = new View($("app"), TIER_SETTINGS[tier]);
         watchContext(view.renderer.domElement);
         await step(1);
         attract = new Game(1);
@@ -263,8 +265,8 @@ const fail = (msg: string) => {
         view.pump(Infinity, attract.ship.y); // behind the splash, so build it all now
         await step(3);
         await view.warmup();
-        document.querySelector('.ls-best')!.textContent = best ? `Best ${best.toLocaleString()}` : '';
-        boot.classList.add('ready');
+        document.querySelector(".ls-best")!.textContent = best ? `Best ${best.toLocaleString()}` : "";
+        boot.classList.add("ready");
         ready = true;
         wake();
     } catch (err) {
@@ -273,16 +275,16 @@ const fail = (msg: string) => {
 })();
 
 function watchContext(canvas: HTMLCanvasElement) {
-    canvas.addEventListener('webglcontextlost', (e) => {
+    canvas.addEventListener("webglcontextlost", (e) => {
         e.preventDefault();
-        if (!sessionStorage.getItem('tf-ctx-reload')) {
-            sessionStorage.setItem('tf-ctx-reload', '1');
+        if (!sessionStorage.getItem("tf-ctx-reload")) {
+            sessionStorage.setItem("tf-ctx-reload", "1");
             location.reload();
-        } else fail('The graphics context was lost. Close other tabs or apps and reload the page.');
+        } else fail("The graphics context was lost. Close other tabs or apps and reload the page.");
     });
-    setTimeout(() => sessionStorage.removeItem('tf-ctx-reload'), 60000);
+    setTimeout(() => sessionStorage.removeItem("tf-ctx-reload"), 60000);
 }
 
 // Test hooks (scripts/smoke.py reads state through these).
-Object.defineProperty(window, '__game', { get: () => game });
-Object.defineProperty(window, '__running', { get: () => running });
+Object.defineProperty(window, "__game", { get: () => game });
+Object.defineProperty(window, "__running", { get: () => running });

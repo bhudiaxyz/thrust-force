@@ -37,7 +37,7 @@
  *
  * See also: view.ts, main.ts (governor), scripts/check.ts; DESIGN.md "8. Quality tiers".
  */
-export type Tier = 'high' | 'mobile-high' | 'mid' | 'low';
+export type Tier = "high" | "mobile-high" | "mid" | "low";
 
 export interface TierSettings {
     /** Max device pixel ratio for the drawing buffer. */
@@ -58,10 +58,50 @@ export interface TierSettings {
 }
 
 export const TIER_SETTINGS: Record<Tier, TierSettings> = {
-    high: { dprCap: 2, msaa: 4, bloom: true, shadowMap: 4096, bump: true, dust: 500, particles: 3000, stars: 1800, buildMs: 8 },
-    'mobile-high': { dprCap: 1.5, msaa: 2, bloom: true, shadowMap: 1024, bump: true, dust: 200, particles: 2000, stars: 1200, buildMs: 5 },
-    mid: { dprCap: 1.5, msaa: 2, bloom: true, shadowMap: 0, bump: false, dust: 0, particles: 2000, stars: 1200, buildMs: 5 },
-    low: { dprCap: 1, msaa: 0, bloom: false, shadowMap: 0, bump: false, dust: 0, particles: 900, stars: 600, buildMs: 3 },
+    high: {
+        dprCap: 2,
+        msaa: 4,
+        bloom: true,
+        shadowMap: 4096,
+        bump: true,
+        dust: 500,
+        particles: 3000,
+        stars: 1800,
+        buildMs: 8,
+    },
+    "mobile-high": {
+        dprCap: 1.5,
+        msaa: 2,
+        bloom: true,
+        shadowMap: 1024,
+        bump: true,
+        dust: 200,
+        particles: 2000,
+        stars: 1200,
+        buildMs: 5,
+    },
+    mid: {
+        dprCap: 1.5,
+        msaa: 2,
+        bloom: true,
+        shadowMap: 0,
+        bump: false,
+        dust: 0,
+        particles: 2000,
+        stars: 1200,
+        buildMs: 5,
+    },
+    low: {
+        dprCap: 1,
+        msaa: 0,
+        bloom: false,
+        shadowMap: 0,
+        bump: false,
+        dust: 0,
+        particles: 900,
+        stars: 600,
+        buildMs: 3,
+    },
 };
 
 export interface GpuProbe {
@@ -73,39 +113,39 @@ export interface GpuProbe {
 
 export function classifyGpu(p: GpuProbe): Tier {
     const r = p.renderer.toLowerCase();
-    if (/swiftshader|llvmpipe|software|basic render/.test(r) || (p.memGB ?? 8) <= 2) return 'low';
+    if (/swiftshader|llvmpipe|software|basic render/.test(r) || (p.memGB ?? 8) <= 2) return "low";
     if (p.mobile) {
         // Every WebGL2-capable iOS / iPadOS device (A10+, 2016-) handles mobile-high; the
         // governor catches the oldest. Safari under-reports cores, so check Apple first.
-        if (/apple/.test(r)) return 'mobile-high';
+        if (/apple/.test(r)) return "mobile-high";
         const adreno = /adreno[^0-9]*(\d{3})/.exec(r);
-        if (adreno) return +adreno[1] >= 700 ? 'mobile-high' : +adreno[1] >= 630 ? 'mid' : 'low';
-        if (/xclipse|immortalis/.test(r)) return 'mobile-high';
+        if (adreno) return +adreno[1] >= 700 ? "mobile-high" : +adreno[1] >= 630 ? "mid" : "low";
+        if (/xclipse|immortalis/.test(r)) return "mobile-high";
         const mali = /mali-g(\d+)/.exec(r);
-        if (mali) return +mali[1] >= 710 ? 'mobile-high' : +mali[1] >= 76 ? 'mid' : 'low';
-        return p.cores >= 8 ? 'mid' : 'low';
+        if (mali) return +mali[1] >= 710 ? "mobile-high" : +mali[1] >= 76 ? "mid" : "low";
+        return p.cores >= 8 ? "mid" : "low";
     }
-    if (p.cores <= 2) return 'low';
+    if (p.cores <= 2) return "low";
     // Entry-level / old discrete GPUs (GTX 9xx, 1030-1050, MX, GT): mid rather than high.
-    if (/gtx ?(9\d\d|10[3-5]0)|\bmx ?\d{2,3}\b|\bgt ?\d{3,4}\b|rx ?5[56]0\b/.test(r)) return 'mid';
-    if (/nvidia|geforce|rtx|radeon (rx|pro)|\brx ?\d{3,4}|apple m\d|apple gpu|arc\(tm\) a\d{3}/.test(r)) return 'high';
-    if (/arc|iris|radeon|vega/.test(r)) return 'mid';
-    if (/intel/.test(r)) return 'low';
-    return p.cores >= 8 ? 'mid' : 'low';
+    if (/gtx ?(9\d\d|10[3-5]0)|\bmx ?\d{2,3}\b|\bgt ?\d{3,4}\b|rx ?5[56]0\b/.test(r)) return "mid";
+    if (/nvidia|geforce|rtx|radeon (rx|pro)|\brx ?\d{3,4}|apple m\d|apple gpu|arc\(tm\) a\d{3}/.test(r)) return "high";
+    if (/arc|iris|radeon|vega/.test(r)) return "mid";
+    if (/intel/.test(r)) return "low";
+    return p.cores >= 8 ? "mid" : "low";
 }
 
-export function detectTier(): Tier | 'none' {
-    const forced = new URLSearchParams(location.search).get('tier');
+export function detectTier(): Tier | "none" {
+    const forced = new URLSearchParams(location.search).get("tier");
     if (forced && forced in TIER_SETTINGS) return forced as Tier;
-    let renderer = '';
+    let renderer = "";
     try {
-        const gl = document.createElement('canvas').getContext('webgl2', { powerPreference: 'high-performance' });
-        if (!gl) return 'none';
-        const dbg = gl.getExtension('WEBGL_debug_renderer_info');
-        renderer = String(gl.getParameter(dbg ? dbg.UNMASKED_RENDERER_WEBGL : gl.RENDERER) || '');
-        gl.getExtension('WEBGL_lose_context')?.loseContext();
+        const gl = document.createElement("canvas").getContext("webgl2", { powerPreference: "high-performance" });
+        if (!gl) return "none";
+        const dbg = gl.getExtension("WEBGL_debug_renderer_info");
+        renderer = String(gl.getParameter(dbg ? dbg.UNMASKED_RENDERER_WEBGL : gl.RENDERER) || "");
+        gl.getExtension("WEBGL_lose_context")?.loseContext();
     } catch {
-        return 'none';
+        return "none";
     }
     const ua = navigator.userAgent;
     const mobile = /Mobi|Android|iPad|iPhone/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);

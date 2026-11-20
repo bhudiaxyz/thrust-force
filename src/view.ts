@@ -11,7 +11,7 @@
  * Operations
  *   - constructor(parent, tierSettings): renderer (no canvas MSAA: anti-aliasing happens on the
  *     multisampled composer target instead), ACES tone mapping, optional soft PCF shadows,
- *     lights, the persistent ship / pod / rod / beam / bullet / particle / debris / ring objects,
+ *     lights, the persistent ship / pod / rod / beam / bullet objects, the Effects (fx.ts),
  *     shared rock + edge materials, and the composer (RenderPass → UnrealBloomPass → OutputPass).
  *   - build(level) (private): when game.level changes identity, disposes the old level, builds
  *     the cheap parts at once (back wall, stars, pedestal, turrets, fuel cells, reactor) and
@@ -21,9 +21,9 @@
  *     planet streams in over a few frames instead of freezing one; boot calls it with Infinity.
  *   - warmup(): compiles every shader, including objects that start hidden (flame, shield,
  *     rings, rod, beam, debris), so the first thrust or explosion doesn't hitch.
- *   - sync(game, dt): pumps chunks, poses everything from game state, integrates particles and
- *     debris, moves the chase camera, sun and dust, then renders.
- *   - burst() / explode(): sparks; layered voxel explosions.
+ *   - sync(game, dt): pumps chunks, poses everything from game state, moves the chase camera
+ *     and the shadow-casting sun, updates the effects (fx.ts), then renders.
+ *   - burst() / explode(): delegate to Effects (sparks; layered voxel explosions).
  *   - degrade(): one step down in cost (DPR → shadows → bloom); returns false when nothing is
  *     left. Called by main.ts's frame-time governor.
  *   - resize(): on window resize.
@@ -39,65 +39,40 @@
  *     (>1), so they cross the bloom threshold (0.82) while lit surfaces mostly don't.
  *   - Rock chunks are separate InstancedMeshes, so three.js frustum-culls the ones off screen
  *     (and outside the shadow camera): typically 2-3 of 8-12 are drawn.
- *   - The per-frame path allocates nothing (scratch objects, element-wise buffer writes).
+ *   - The per-frame path allocates nothing (scratch objects, element-wise buffer writes, cached
+ *     turret barrels).
  *   - The camera sits 4 units below its look-at point so floors show their tops and tunnels
  *     read as 3D; portrait screens pull the camera back (z = 30 / aspect).
  *
- * See also: game.ts (state it draws), rock.ts, palette.ts, tier.ts, main.ts; DESIGN.md
+ * See also: game.ts (state it draws), fx.ts, rock.ts, palette.ts, tier.ts, main.ts; DESIGN.md
  * "7. Rendering".
  */
-import * as THREE from 'three';
-import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
-import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
-import type { Game } from './game';
-import { isAir, isRock, solidAt, type Level } from './level';
-import type { TierSettings } from './tier';
-import { BLOCK, blockAt, rockMaterial, TINTLESS, wallMaterial } from './rock';
-import { COLORS, evenGlow, ramp, themeFor, type RGB } from './palette';
+import * as THREE from "three";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
+import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
+import type { Game } from "./game";
+import { isAir, isRock, type Level } from "./level";
+import { dotTexture, Effects, pointsLayer } from "./fx";
+import type { TierSettings } from "./tier";
+import { BLOCK, blockAt, rockMaterial, TINTLESS, wallMaterial } from "./rock";
+import { COLORS, evenGlow, themeFor, type RGB } from "./palette";
 
 const C = COLORS;
 const WHITE = new THREE.Color(1, 1, 1);
-/** Cave dust volume (world units) wrapped around the camera. */
-const DUST_BOX: [number, number] = [60, 44];
 
-function dotTexture() {
-    const c = document.createElement('canvas');
-    c.width = c.height = 32;
-    const g = c.getContext('2d')!;
-    const grad = g.createRadialGradient(16, 16, 0, 16, 16, 16);
-    grad.addColorStop(0, 'rgba(255,255,255,1)');
-    grad.addColorStop(0.4, 'rgba(255,255,255,0.6)');
-    grad.addColorStop(1, 'rgba(255,255,255,0)');
-    g.fillStyle = grad;
-    g.fillRect(0, 0, 32, 32);
-    return new THREE.CanvasTexture(c);
-}
-
-function pointsLayer(max: number, size: number, tex: THREE.Texture) {
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(max * 3), 3));
-    geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(max * 3), 3));
-    geo.setDrawRange(0, 0);
-    const mat = new THREE.PointsMaterial({
-        size,
-        map: tex,
-        vertexColors: true,
-        transparent: true,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-        toneMapped: false,
-    });
-    const pts = new THREE.Points(geo, mat);
-    pts.frustumCulled = false;
-    return pts;
-}
-
-const MAX_DEBRIS = 400;
 /** Rows per rock chunk: one InstancedMesh each, so off-screen chunks are culled. */
 const CHUNK = 24;
 const MARGIN = 12; // solid cells drawn beyond the grid's sides and bottom
+/** Camera distance from the playfield (landscape); stars use it to size their layers. */
+const CAM_Z = 34;
+/** Starfield layers: depth range, share of the tier's star count, point size and brightness. */
+const STAR_LAYERS = [
+    { near: 6, far: 16, share: 0.15, size: 0.3, bright: 1.2 }, // ~75% of playfield speed
+    { near: 40, far: 80, share: 0.3, size: 0.55, bright: 1.0 }, // ~35%
+    { near: 160, far: 320, share: 0.55, size: 2.2, bright: 0.8 }, // ~12%
+];
 
 const neonMat = ([r, g, b]: RGB) => new THREE.MeshBasicMaterial({ color: new THREE.Color(r, g, b), toneMapped: false });
 
@@ -116,33 +91,16 @@ export class View {
     private pod = new THREE.Group();
     private rodLine: THREE.Line;
     private beamLine: THREE.Line;
-    private turrets: THREE.Group[] = [];
+    private turrets: { grp: THREE.Group; barrel: THREE.Object3D }[] = [];
     private fuel: THREE.Group[] = [];
     private reactor = new THREE.Group();
     private reactorCore!: THREE.Mesh;
     private reactorLight = new THREE.PointLight(C.light.reactor, 50, 18, 1.6);
     private bullets: THREE.Points;
-    private sparks: THREE.Points;
     private sun = new THREE.DirectionalLight(C.light.sun, 1.6);
-    private maxP: number;
-    private pv: Float32Array;
-    private plife: Float32Array;
-    private pcol: Float32Array;
-    private pn = 0;
-    private shake = 0;
     private time = 0;
-    // Explosions: tumbling ember voxels, shockwave rings and a flash light (see explode()).
-    private debris: THREE.InstancedMesh;
-    private dPos = new Float32Array(MAX_DEBRIS * 3);
-    private dVel = new Float32Array(MAX_DEBRIS * 3);
-    private dRot = new Float32Array(MAX_DEBRIS * 3);
-    private dSpin = new Float32Array(MAX_DEBRIS * 3);
-    private dLife = new Float32Array(MAX_DEBRIS * 2); // remaining, total
-    private dSize = new Float32Array(MAX_DEBRIS);
-    private dTint = new Float32Array(MAX_DEBRIS * 3); // 0,0,0 = ember (cools white→amber→red)
-    private dn = 0;
-    private rings: { mesh: THREE.Mesh; life: number; max: number; size: number }[] = [];
-    private flash = new THREE.PointLight(C.light.flash, 0, 40, 1.4);
+    private fx: Effects;
+    private starTex = dotTexture();
     private neon: RGB = themeFor(1).neon;
     // Rock streaming (see build / pump) and the materials every planet shares.
     private jobs: number[] = []; // chunk start rows still to build
@@ -151,23 +109,21 @@ export class View {
     private stripMat = new THREE.MeshBasicMaterial({ toneMapped: false });
     private boxGeo = new THREE.BoxGeometry(1, 1, 3);
     private unitBox = new THREE.BoxGeometry(1, 1, 1);
-    // Cave dust (high tiers): motes in a box that wraps around the camera.
-    private dust: THREE.Points | null = null;
 
     constructor(
         parent: HTMLElement,
-        private ts: TierSettings,
+        private ts: TierSettings
     ) {
         // No canvas MSAA: the image goes through the composer, whose render target is
         // multisampled instead (canvas MSAA would be wasted memory and fill).
-        this.renderer = new THREE.WebGLRenderer({ antialias: false, stencil: false, powerPreference: 'high-performance' });
+        this.renderer = new THREE.WebGLRenderer({
+            antialias: false,
+            stencil: false,
+            powerPreference: "high-performance",
+        });
         this.renderer.setPixelRatio(Math.min(devicePixelRatio, ts.dprCap));
         this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
         parent.appendChild(this.renderer.domElement);
-        this.maxP = ts.particles;
-        this.pv = new Float32Array(this.maxP * 2);
-        this.plife = new Float32Array(this.maxP);
-        this.pcol = new Float32Array(this.maxP * 3);
 
         // Sun from upper-left-front. On the high tier it casts a soft shadow map that follows the
         // ship, so rock, ship and pod throw shadows onto the back wall and tunnel sides.
@@ -205,11 +161,11 @@ export class View {
         hullGeo.translate(0, 0, -0.25);
         const hullMesh = new THREE.Mesh(
             hullGeo,
-            new THREE.MeshStandardMaterial({ color: C.ship.hull, metalness: 0.7, roughness: 0.35 }),
+            new THREE.MeshStandardMaterial({ color: C.ship.hull, metalness: 0.7, roughness: 0.35 })
         );
         const edges = new THREE.LineSegments(
             new THREE.EdgesGeometry(hullGeo, 30),
-            new THREE.LineBasicMaterial({ color: new THREE.Color(...C.ship.outline), toneMapped: false }),
+            new THREE.LineBasicMaterial({ color: new THREE.Color(...C.ship.outline), toneMapped: false })
         );
         const canopy = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 8), neonMat(C.ship.canopy));
         canopy.position.set(0, 0.2, 0.32);
@@ -221,7 +177,7 @@ export class View {
                 transparent: true,
                 opacity: 0.9,
                 blending: THREE.AdditiveBlending,
-            }),
+            })
         );
         this.flame.rotation.z = Math.PI;
         this.shield = new THREE.Mesh(
@@ -233,7 +189,7 @@ export class View {
                 opacity: 0.8,
                 blending: THREE.AdditiveBlending,
                 side: THREE.DoubleSide,
-            }),
+            })
         );
         hullMesh.castShadow = true;
         this.ship.add(hullMesh, edges, canopy, this.flame, this.shield);
@@ -242,7 +198,7 @@ export class View {
         // Pod: glossy orb in a neon ring.
         const orb = new THREE.Mesh(
             new THREE.SphereGeometry(0.6, 24, 16),
-            new THREE.MeshStandardMaterial({ color: C.pod.body, metalness: 0.8, roughness: 0.25 }),
+            new THREE.MeshStandardMaterial({ color: C.pod.body, metalness: 0.8, roughness: 0.25 })
         );
         const ring = new THREE.Mesh(new THREE.TorusGeometry(0.66, 0.06, 8, 32), neonMat(C.pod.ring));
         orb.castShadow = true;
@@ -258,55 +214,11 @@ export class View {
 
         const tex = dotTexture();
         this.bullets = pointsLayer(400, 0.5, tex);
-        this.sparks = pointsLayer(this.maxP, 0.35, tex);
-        this.scene.add(this.bullets, this.sparks);
-
-        this.debris = new THREE.InstancedMesh(
-            new THREE.BoxGeometry(1, 1, 1),
-            new THREE.MeshBasicMaterial({ toneMapped: false }),
-            MAX_DEBRIS,
-        );
-        this.debris.setColorAt(0, new THREE.Color());
-        this.debris.count = 0;
-        this.debris.frustumCulled = false;
-        const ringGeo = new THREE.RingGeometry(0.85, 1, 48);
-        for (let k = 0; k < 6; k++) {
-            const mesh = new THREE.Mesh(
-                ringGeo,
-                new THREE.MeshBasicMaterial({
-                    toneMapped: false,
-                    transparent: true,
-                    blending: THREE.AdditiveBlending,
-                    depthWrite: false,
-                    side: THREE.DoubleSide,
-                }),
-            );
-            mesh.visible = false;
-            this.rings.push({ mesh, life: 0, max: 1, size: 1 });
-            this.scene.add(mesh);
-        }
-        this.scene.add(this.debris, this.flash);
+        this.scene.add(this.bullets);
+        this.fx = new Effects(this.scene, ts, tex);
 
         this.rockMat = rockMaterial(ts.bump);
         this.rockMat.userData.shared = this.stripMat.userData.shared = true;
-
-        if (ts.dust > 0) {
-            const n = ts.dust;
-            this.dust = pointsLayer(n, 0.12, tex);
-            const dp = this.dust.geometry.attributes.position.array as Float32Array;
-            const dc = this.dust.geometry.attributes.color.array as Float32Array;
-            for (let k = 0; k < n; k++) {
-                dp[k * 3] = Math.random() * DUST_BOX[0];
-                dp[k * 3 + 1] = Math.random() * DUST_BOX[1];
-                dp[k * 3 + 2] = -1.2 + Math.random() * 2.4;
-                const v = 0.25 + Math.random() * 0.5;
-                dc[k * 3] = v * C.fx.dust[0];
-                dc[k * 3 + 1] = v * C.fx.dust[1];
-                dc[k * 3 + 2] = v * C.fx.dust[2];
-            }
-            this.dust.geometry.setDrawRange(0, n);
-            this.scene.add(this.dust);
-        }
 
         // HalfFloat keeps HDR neon above 1 for bloom; samples = MSAA on WebGL2.
         const target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: ts.msaa });
@@ -316,7 +228,7 @@ export class View {
         if (ts.bloom) this.composer.addPass(this.bloom);
         this.composer.addPass(new OutputPass());
         this.resize();
-        addEventListener('resize', () => this.resize());
+        addEventListener("resize", () => this.resize());
     }
 
     resize() {
@@ -346,7 +258,13 @@ export class View {
         // pump() nearest the ship first. Edge-strip colour is per planet, the material shared.
         this.neon = evenGlow(pal.neon);
         this.stripMat.color.setRGB(...this.neon);
-        this.chunkCtx = { lv, deep: new THREE.Color(pal.deep), top: new THREE.Color(pal.top), surf: new THREE.Color(pal.surf) };
+        this.fx.setNeon(this.neon);
+        this.chunkCtx = {
+            lv,
+            deep: new THREE.Color(pal.deep),
+            top: new THREE.Color(pal.top),
+            surf: new THREE.Color(pal.surf),
+        };
         this.jobs = [];
         for (let y0 = -MARGIN; y0 < h; y0 += CHUNK) this.jobs.push(y0);
 
@@ -357,40 +275,54 @@ export class View {
         for (let x = w - 1; x >= 0; x--) back.lineTo(x + 0.5, lv.surface[x] - 1);
         const wall = new THREE.Mesh(
             new THREE.ShapeGeometry(back),
-            wallMaterial(new THREE.Color(pal.deep).multiplyScalar(0.6)),
+            wallMaterial(new THREE.Color(pal.deep).multiplyScalar(0.6))
         );
         wall.position.z = -1.45;
         wall.receiveShadow = true;
         this.levelGroup.add(wall);
 
-        // Stars.
-        const starCount = this.ts.stars;
-        const sp = new Float32Array(starCount * 3),
-            sc = new Float32Array(starCount * 3);
-        for (let k = 0; k < starCount; k++) {
-            sp.set([-80 + Math.random() * (w + 160), h * 0.4 + Math.random() * h, -40 - Math.random() * 40], k * 3);
-            const v = 0.4 + Math.random() * 1.4;
-            sc.set([v * C.fx.star[0], v * C.fx.star[1], v * C.fx.star[2]], k * 3);
+        // Stars: STAR_LAYERS at very different depths. Under the perspective camera a layer at depth
+        // d slides across the screen at CAM_Z / (CAM_Z + d) of the playfield's speed, so near, mid
+        // and far layers move at clearly different rates: that difference is the parallax. Each
+        // layer spreads wide enough to fill the view at its depth; far stars are drawn larger to
+        // offset perspective shrinking.
+        const tex = this.starTex;
+        for (const L of STAR_LAYERS) {
+            const n = Math.round(this.ts.stars * L.share);
+            const sp = new Float32Array(n * 3),
+                sc = new Float32Array(n * 3);
+            for (let k = 0; k < n; k++) {
+                const z = -(L.near + Math.random() * (L.far - L.near));
+                const spread = (CAM_Z - z) / CAM_Z; // view size at this depth relative to z = 0
+                sp[k * 3] = w / 2 + (Math.random() - 0.5) * (w + 60) * spread;
+                sp[k * 3 + 1] = h - 20 + (Math.random() - 0.5) * (2 * 18 * spread + h * 0.6);
+                sp[k * 3 + 2] = z;
+                const v = L.bright * (0.4 + Math.random() * 1.4);
+                sc[k * 3] = v * C.fx.star[0];
+                sc[k * 3 + 1] = v * C.fx.star[1];
+                sc[k * 3 + 2] = v * C.fx.star[2];
+            }
+            const sg = new THREE.BufferGeometry();
+            sg.setAttribute("position", new THREE.BufferAttribute(sp, 3));
+            sg.setAttribute("color", new THREE.BufferAttribute(sc, 3));
+            const stars = new THREE.Points(
+                sg,
+                new THREE.PointsMaterial({
+                    size: L.size,
+                    vertexColors: true,
+                    map: tex,
+                    transparent: true,
+                    toneMapped: false,
+                })
+            );
+            stars.frustumCulled = false;
+            this.levelGroup.add(stars);
         }
-        const sg = new THREE.BufferGeometry();
-        sg.setAttribute('position', new THREE.BufferAttribute(sp, 3));
-        sg.setAttribute('color', new THREE.BufferAttribute(sc, 3));
-        const stars = new THREE.Points(
-            sg,
-            new THREE.PointsMaterial({
-                size: 0.5,
-                vertexColors: true,
-                map: dotTexture(),
-                transparent: true,
-                toneMapped: false,
-            }),
-        );
-        this.levelGroup.add(stars);
 
         // Pod pedestal.
         const ped = new THREE.Mesh(
             new THREE.CylinderGeometry(0.9, 1.1, 0.25, 16),
-            new THREE.MeshStandardMaterial({ color: C.fixture.pedestal, metalness: 0.7, roughness: 0.4 }),
+            new THREE.MeshStandardMaterial({ color: C.fixture.pedestal, metalness: 0.7, roughness: 0.4 })
         );
         ped.position.set(lv.pod.x, lv.pod.y - 0.62, 0);
         this.levelGroup.add(ped);
@@ -409,13 +341,12 @@ export class View {
             eye.position.set(0, -0.15, 0.45);
             const barrel = new THREE.Mesh(barrelGeo, tMat);
             barrel.position.y = -0.1;
-            barrel.name = 'barrel';
             dome.castShadow = barrel.castShadow = true;
             g.add(dome, eye, barrel);
             g.position.set(t.x, t.y, 0);
             if (!t.up) g.rotation.z = Math.PI;
             this.levelGroup.add(g);
-            return g;
+            return { grp: g, barrel };
         });
 
         // Fuel cells.
@@ -448,8 +379,7 @@ export class View {
         this.reactor.position.set(lv.reactor.x, lv.reactor.y, 0);
         this.reactor.visible = true;
         this.builtFor = lv;
-        this.pn = 0;
-        this.dn = 0;
+        this.fx.reset();
     }
 
     /** Build queued rock chunks, nearest to focusY first, until budgetMs is spent (min one). */
@@ -458,7 +388,8 @@ export class View {
         while (this.jobs.length) {
             let best = 0;
             for (let k = 1; k < this.jobs.length; k++)
-                if (Math.abs(this.jobs[k] + CHUNK / 2 - focusY) < Math.abs(this.jobs[best] + CHUNK / 2 - focusY)) best = k;
+                if (Math.abs(this.jobs[k] + CHUNK / 2 - focusY) < Math.abs(this.jobs[best] + CHUNK / 2 - focusY))
+                    best = k;
             const [y0] = this.jobs.splice(best, 1);
             this.buildChunk(y0, Math.min(y0 + CHUNK, this.chunkCtx!.lv.h));
             if (performance.now() - t0 >= budgetMs) break;
@@ -476,7 +407,7 @@ export class View {
         if (!count) return;
         const tiles = new Float32Array(count);
         const geo = this.boxGeo.clone(); // shares nothing mutable; holds this chunk's aTile attribute
-        geo.setAttribute('aTile', new THREE.InstancedBufferAttribute(tiles, 1));
+        geo.setAttribute("aTile", new THREE.InstancedBufferAttribute(tiles, 1));
         const rock = new THREE.InstancedMesh(geo, this.rockMat, count);
         const m = this.tmpM,
             col = this.tmpC;
@@ -527,14 +458,14 @@ export class View {
      * shield, tow or explosion doesn't stall on a shader compile mid-game.
      */
     async warmup() {
-        const hidden = [this.flame, this.shield, this.rodLine, this.beamLine, ...this.rings.map((r) => r.mesh)];
+        const hidden = [this.flame, this.shield, this.rodLine, this.beamLine, ...this.fx.hiddenObjects()];
         const was = hidden.map((o) => o.visible);
         hidden.forEach((o) => (o.visible = true));
-        this.debris.count = 1;
+        this.fx.setDebrisWarm(true);
         await this.renderer.compileAsync(this.scene, this.camera);
         this.composer.render(0); // also builds the post-processing programs and targets
         hidden.forEach((o, k) => (o.visible = was[k]));
-        this.debris.count = this.dn;
+        this.fx.setDebrisWarm(false);
     }
 
     /**
@@ -564,146 +495,21 @@ export class View {
         return false;
     }
 
+    /** Sparks: see Effects.burst. */
     burst(x: number, y: number, n: number, speed: number, rgb: RGB, life = 1) {
-        for (let k = 0; k < n; k++) {
-            const i = this.pn < this.maxP ? this.pn++ : Math.floor(Math.random() * this.maxP);
-            const a = Math.random() * Math.PI * 2,
-                v = speed * (0.2 + Math.random());
-            const pos = this.sparks.geometry.attributes.position.array as Float32Array;
-            pos[i * 3] = x;
-            pos[i * 3 + 1] = y;
-            pos[i * 3 + 2] = (Math.random() - 0.5) * 1.5;
-            this.pv[i * 2] = Math.cos(a) * v;
-            this.pv[i * 2 + 1] = Math.sin(a) * v;
-            this.plife[i] = life * (0.5 + Math.random() * 0.5);
-            this.pcol[i * 3] = rgb[0];
-            this.pcol[i * 3 + 1] = rgb[1];
-            this.pcol[i * 3 + 2] = rgb[2];
-        }
-        if (n > 30) this.shake = Math.max(this.shake, n / 80);
+        this.fx.burst(x, y, n, speed, rgb, life);
     }
 
-    /**
-     * Voxel explosion. big = ship / reactor death; small = turret or fuel cell. Layers: a light
-     * flash on the cave walls, a white-hot core of sparks, amber and red sparks, sparks in the
-     * planet's neon colour, two shockwave rings (neon, then amber), and tumbling cubes: most are
-     * embers that cool white → amber → red → soot, the rest are hull-grey and neon chunks.
-     */
+    /** Layered voxel explosion: see Effects.explode. */
     explode(x: number, y: number, big: boolean) {
-        const k = big ? 1 : 0.45;
-        this.flash.position.set(x, y, 4);
-        this.flash.intensity = Math.max(this.flash.intensity, big ? 900 : 260);
-        this.burst(x, y, Math.round(60 * k), 18 * k + 4, C.fx.sparkCore, 0.35);
-        this.burst(x, y, Math.round(90 * k), 12 * k + 3, C.fx.sparkAmber, 1.2);
-        this.burst(x, y, Math.round(50 * k), 7 * k + 2, C.fx.sparkRed, 1.8);
-        this.burst(x, y, Math.round(40 * k), 10 * k + 3, this.neon, 1.1);
-        this.ring(x, y, big ? 9 : 4, 0.55, this.neon);
-        this.ring(x, y, big ? 5.5 : 2.5, 0.8, C.fx.ringHot);
-        const [nr, ng, nb] = this.neon;
-        const pieces = big ? 70 : 22;
-        for (let n = 0; n < pieces; n++) {
-            const i = this.dn < MAX_DEBRIS ? this.dn++ : Math.floor(Math.random() * MAX_DEBRIS);
-            const a = Math.random() * Math.PI * 2,
-                v = (big ? 4 : 2.5) + Math.random() * (big ? 11 : 6);
-            this.dPos.set([x, y, (Math.random() - 0.5) * 1.2], i * 3);
-            this.dVel.set([Math.cos(a) * v, Math.sin(a) * v + 3, (Math.random() - 0.5) * 6], i * 3);
-            this.dRot.set([Math.random() * 6, Math.random() * 6, Math.random() * 6], i * 3);
-            this.dSpin.set([(Math.random() - 0.5) * 16, (Math.random() - 0.5) * 16, (Math.random() - 0.5) * 16], i * 3);
-            const life = 1.2 + Math.random() * (big ? 2 : 1);
-            this.dLife.set([life, life], i * 2);
-            this.dSize[i] = 0.12 + Math.random() * (big ? 0.3 : 0.18);
-            const kind = Math.random();
-            this.dTint.set(kind < 0.62 ? [0, 0, 0] : kind < 0.82 ? C.fx.debrisHull : [nr, ng, nb], i * 3);
-        }
-        this.shake = Math.max(this.shake, big ? 1.6 : 0.5);
-    }
-
-    private ring(x: number, y: number, size: number, life: number, rgb: RGB) {
-        const r = this.rings.reduce((a, b) => (a.life < b.life ? a : b));
-        r.mesh.position.set(x, y, 0.6);
-        (r.mesh.material as THREE.MeshBasicMaterial).color.setRGB(...rgb);
-        Object.assign(r, { life, max: life, size });
-        r.mesh.visible = true;
-    }
-
-    private updateExplosions(dt: number, lv: Level) {
-        this.flash.intensity *= Math.exp(-dt * 7);
-        for (const r of this.rings) {
-            if (!r.mesh.visible) continue;
-            r.life -= dt;
-            if (r.life <= 0) {
-                r.mesh.visible = false;
-                continue;
-            }
-            const t = 1 - r.life / r.max;
-            const sc = 0.3 + r.size * (1 - (1 - t) * (1 - t));
-            r.mesh.scale.set(sc, sc, sc);
-            (r.mesh.material as THREE.MeshBasicMaterial).opacity = (1 - t) * (1 - t);
-        }
-
-        const m = this.tmpM,
-            q = this.tmpQ,
-            e = this.tmpE,
-            p = this.tmpP,
-            sc = this.tmpS,
-            c = this.tmpC;
-        let live = 0;
-        for (let i = 0; i < this.dn; i++) {
-            if ((this.dLife[i * 2] -= dt) <= 0) continue;
-            // Integrate with gravity; bounce off rock, losing energy, so chunks skitter along floors.
-            const i3 = i * 3;
-            this.dVel[i3 + 1] -= lv.gravity * 1.6 * dt;
-            const nx = this.dPos[i3] + this.dVel[i3] * dt,
-                ny = this.dPos[i3 + 1] + this.dVel[i3 + 1] * dt;
-            if (solidAt(lv, this.dPos[i3], ny)) {
-                this.dVel[i3 + 1] *= -0.4;
-                this.dVel[i3] *= 0.7;
-                this.dSpin[i3] *= 0.6;
-            } else this.dPos[i3 + 1] = ny;
-            if (solidAt(lv, nx, this.dPos[i3 + 1])) this.dVel[i3] *= -0.4;
-            else this.dPos[i3] = nx;
-            this.dPos[i3 + 2] += this.dVel[i3 + 2] * dt;
-            for (let a = 0; a < 3; a++) this.dRot[i3 + a] += this.dSpin[i3 + a] * dt;
-
-            const t = this.dLife[i * 2] / this.dLife[i * 2 + 1]; // 1 → 0
-            const tr = this.dTint[i3],
-                tg = this.dTint[i3 + 1],
-                tb = this.dTint[i3 + 2];
-            if (tr + tg + tb === 0) c.setRGB(...ramp(C.ember, t, this.tmpRgb));
-            // Ember: white-hot → amber → red → soot (COLORS.ember).
-            else c.setRGB(tr * (0.35 + t), tg * (0.35 + t), tb * (0.35 + t));
-            const s = this.dSize[i] * Math.min(1, t * 4);
-            m.compose(
-                p.set(this.dPos[i3], this.dPos[i3 + 1], this.dPos[i3 + 2]),
-                q.setFromEuler(e.set(this.dRot[i3], this.dRot[i3 + 1], this.dRot[i3 + 2])),
-                sc.set(s, s, s),
-            );
-            if (live !== i) {
-                this.dPos.copyWithin(live * 3, i3, i3 + 3);
-                this.dVel.copyWithin(live * 3, i3, i3 + 3);
-                this.dRot.copyWithin(live * 3, i3, i3 + 3);
-                this.dSpin.copyWithin(live * 3, i3, i3 + 3);
-                this.dTint.copyWithin(live * 3, i3, i3 + 3);
-                this.dLife.copyWithin(live * 2, i * 2, i * 2 + 2);
-                this.dSize[live] = this.dSize[i];
-            }
-            this.debris.setMatrixAt(live, m);
-            this.debris.setColorAt(live, c);
-            live++;
-        }
-        this.dn = live;
-        this.debris.count = live;
-        this.debris.instanceMatrix.needsUpdate = true;
-        if (this.debris.instanceColor) this.debris.instanceColor.needsUpdate = true;
+        this.fx.explode(x, y, big);
     }
 
     private tmpM = new THREE.Matrix4();
     private tmpQ = new THREE.Quaternion();
-    private tmpE = new THREE.Euler();
     private tmpP = new THREE.Vector3();
     private tmpS = new THREE.Vector3();
     private tmpC = new THREE.Color();
-    private tmpRgb: RGB = [0, 0, 0];
 
     sync(g: Game, dt: number) {
         const lv = g.level;
@@ -711,7 +517,7 @@ export class View {
         const s = g.ship;
         if (this.jobs.length) this.pump(this.ts.buildMs, s.y);
         this.time += dt;
-        const alive = g.phase === 'play' || g.phase === 'complete';
+        const alive = g.phase === "play" || g.phase === "complete";
 
         this.ship.visible = alive;
         this.ship.position.set(s.x, s.y, 0);
@@ -728,12 +534,7 @@ export class View {
         if (g.thrusting && alive) {
             const dx = Math.sin(s.a),
                 dy = -Math.cos(s.a);
-            for (let k = 0; k < 2; k++) {
-                this.burst(s.x + dx * 0.6, s.y + dy * 0.6, 1, 2, C.fx.exhaust, 0.35);
-                const i = this.pn - 1;
-                this.pv[i * 2] += s.vx + dx * 9;
-                this.pv[i * 2 + 1] += s.vy + dy * 9;
-            }
+            for (let k = 0; k < 2; k++) this.fx.exhaust(s.x + dx * 0.6, s.y + dy * 0.6, s.vx + dx * 9, s.vy + dy * 9);
         }
 
         const p = g.pod;
@@ -744,9 +545,8 @@ export class View {
         this.setLine(this.beamLine, s, g.beam ?? s, !!g.beam && alive);
 
         lv.turrets.forEach((t, k) => {
-            const grp = this.turrets[k];
+            const { grp, barrel } = this.turrets[k];
             grp.visible = t.alive;
-            const barrel = grp.getObjectByName('barrel')!;
             const ang = Math.atan2(s.y - t.y, s.x - t.x) - Math.PI / 2 - grp.rotation.z;
             barrel.rotation.z = Math.max(-1.3, Math.min(1.3, Math.atan2(Math.sin(ang), Math.cos(ang))));
         });
@@ -767,12 +567,12 @@ export class View {
         (this.reactorCore.material as THREE.MeshBasicMaterial).color.setRGB(
             base[0] + swing[0] * pulse,
             base[1] + swing[1] * pulse,
-            base[2] + swing[2] * pulse,
+            base[2] + swing[2] * pulse
         );
         this.reactorLight.color.set(crit ? C.light.reactorCritical : C.light.reactor);
         this.reactorLight.intensity = 20 + 60 * pulse;
         this.reactor.visible = !(crit && g.critical === 0);
-        if (crit) this.shake = Math.max(this.shake, 0.15);
+        if (crit) this.fx.shake = Math.max(this.fx.shake, 0.15);
 
         // Bullets.
         const bp = this.bullets.geometry.attributes.position.array as Float32Array;
@@ -792,36 +592,9 @@ export class View {
         this.bullets.geometry.attributes.color.needsUpdate = true;
         this.bullets.geometry.setDrawRange(0, nb);
 
-        this.updateExplosions(dt, lv);
-
-        // Particles: integrate, fade, compact the dead ones away.
-        const pos = this.sparks.geometry.attributes.position.array as Float32Array;
-        const colr = this.sparks.geometry.attributes.color.array as Float32Array;
-        let live = 0;
-        for (let k = 0; k < this.pn; k++) {
-            if ((this.plife[k] -= dt) <= 0) continue;
-            this.pv[k * 2 + 1] -= lv.gravity * 0.4 * dt;
-            const f = Math.min(1, this.plife[k] * 2);
-            pos[live * 3] = pos[k * 3] + this.pv[k * 2] * dt;
-            pos[live * 3 + 1] = pos[k * 3 + 1] + this.pv[k * 2 + 1] * dt;
-            pos[live * 3 + 2] = pos[k * 3 + 2];
-            this.pv[live * 2] = this.pv[k * 2];
-            this.pv[live * 2 + 1] = this.pv[k * 2 + 1];
-            this.plife[live] = this.plife[k];
-            this.pcol.copyWithin(live * 3, k * 3, k * 3 + 3);
-            colr[live * 3] = this.pcol[live * 3] * f;
-            colr[live * 3 + 1] = this.pcol[live * 3 + 1] * f;
-            colr[live * 3 + 2] = this.pcol[live * 3 + 2] * f;
-            live++;
-        }
-        this.pn = live;
-        this.sparks.geometry.attributes.position.needsUpdate = true;
-        this.sparks.geometry.attributes.color.needsUpdate = true;
-        this.sparks.geometry.setDrawRange(0, live);
-
         // Chase camera: lead with velocity, look slightly up from below for depth, shake.
         const aspect = this.camera.aspect;
-        const z = aspect < 1 ? 30 / Math.max(aspect, 0.5) : 34;
+        const z = aspect < 1 ? 30 / Math.max(aspect, 0.5) : CAM_Z;
         const tx = s.x + s.vx * 0.3,
             ty = s.y + s.vy * 0.3;
         const c = this.camera.position;
@@ -830,31 +603,11 @@ export class View {
         c.x += (tx - c.x) * k;
         c.y += (ty - 4 - c.y) * k;
         c.z = z;
-        this.shake *= Math.exp(-dt * 3);
-        const sh = this.shake;
+        this.fx.shake *= Math.exp(-dt * 3);
+        const sh = this.fx.shake;
         this.camera.lookAt(c.x + (Math.random() - 0.5) * sh, c.y + 4 + (Math.random() - 0.5) * sh, 0);
 
-        // Dust: drift, wrap inside a box centred on the camera; only shown inside the planet.
-        if (this.dust) {
-            const inside = s.y < lv.h - 40;
-            this.dust.visible = inside;
-            if (inside) {
-                const dp = this.dust.geometry.attributes.position.array as Float32Array;
-                const [bw, bh] = DUST_BOX;
-                const ox = c.x - bw / 2,
-                    oy = c.y + 4 - bh / 2;
-                for (let k = 0; k < dp.length; k += 3) {
-                    const ph = k * 0.37 + this.time * 0.3;
-                    let x = dp[k] + Math.sin(ph) * 0.15 * dt,
-                        y = dp[k + 1] + (0.12 + Math.cos(ph * 0.7) * 0.1) * dt;
-                    x = ((((x - ox) % bw) + bw) % bw) + ox;
-                    y = ((((y - oy) % bh) + bh) % bh) + oy;
-                    dp[k] = x;
-                    dp[k + 1] = y;
-                }
-                this.dust.geometry.attributes.position.needsUpdate = true;
-            }
-        }
+        this.fx.update(dt, lv, c.x, c.y + 4, s.y < lv.h - 40);
 
         this.composer.render(dt);
     }

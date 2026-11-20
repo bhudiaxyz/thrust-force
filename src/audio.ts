@@ -30,7 +30,7 @@ let ctx: AudioContext | null = null;
 let master: GainNode;
 let noiseBuf: AudioBuffer;
 let engine: GainNode;
-let muted = localStorage.getItem('tf-muted') === '1';
+let muted = localStorage.getItem("tf-muted") === "1";
 
 export function unlock() {
     if (ctx) return void ctx.resume();
@@ -45,7 +45,7 @@ export function unlock() {
     src.buffer = noiseBuf;
     src.loop = true;
     const lp = ctx.createBiquadFilter();
-    lp.type = 'lowpass';
+    lp.type = "lowpass";
     lp.frequency.value = 420;
     engine = ctx.createGain();
     engine.gain.value = 0;
@@ -55,7 +55,7 @@ export function unlock() {
 
 export function toggleMute() {
     muted = !muted;
-    localStorage.setItem('tf-muted', muted ? '1' : '0');
+    localStorage.setItem("tf-muted", muted ? "1" : "0");
     if (ctx) master.gain.value = muted ? 0 : 0.6;
     return muted;
 }
@@ -85,7 +85,7 @@ function noise(dur: number, vol: number, cutoff: number) {
     const src = ctx.createBufferSource();
     src.buffer = noiseBuf;
     const lp = ctx.createBiquadFilter();
-    lp.type = 'lowpass';
+    lp.type = "lowpass";
     lp.frequency.setValueAtTime(cutoff, t);
     lp.frequency.exponentialRampToValueAtTime(60, t + dur);
     const g = ctx.createGain();
@@ -97,24 +97,24 @@ function noise(dur: number, vol: number, cutoff: number) {
 }
 
 export const sfx = {
-    shoot: () => tone(1200, 0.07, 'square', 0.05, 500),
-    enemyShoot: () => tone(320, 0.12, 'sawtooth', 0.04, 160),
+    shoot: () => tone(1200, 0.07, "square", 0.05, 500),
+    enemyShoot: () => tone(320, 0.12, "sawtooth", 0.04, 160),
     hit: () => noise(0.08, 0.15, 3000),
     boom: () => noise(0.5, 0.45, 1800),
-    bigBoom: () => (noise(1.6, 0.7, 900), tone(90, 1.2, 'sine', 0.4, 30)),
-    attach: () => tone(300, 0.3, 'triangle', 0.15, 900),
-    fuel: () => tone(600, 0.25, 'sine', 0.15, 1400),
+    bigBoom: () => (noise(1.6, 0.7, 900), tone(90, 1.2, "sine", 0.4, 30)),
+    attach: () => tone(300, 0.3, "triangle", 0.15, 900),
+    fuel: () => tone(600, 0.25, "sine", 0.15, 1400),
     land: () => noise(0.12, 0.15, 500),
-    alarm: () => tone(980, 0.18, 'square', 0.06, 700),
-    critical: () => tone(200, 0.8, 'sawtooth', 0.15, 1200),
-    complete: () => [523, 659, 784, 1046].forEach((f, i) => setTimeout(() => tone(f, 0.25, 'triangle', 0.12), i * 110)),
-    extra: () => [784, 1046, 1318].forEach((f, i) => setTimeout(() => tone(f, 0.15, 'square', 0.06), i * 90)),
-    gameover: () => tone(400, 1.4, 'triangle', 0.15, 80),
+    alarm: () => tone(980, 0.18, "square", 0.06, 700),
+    critical: () => tone(200, 0.8, "sawtooth", 0.15, 1200),
+    complete: () => [523, 659, 784, 1046].forEach((f, i) => setTimeout(() => tone(f, 0.25, "triangle", 0.12), i * 110)),
+    extra: () => [784, 1046, 1318].forEach((f, i) => setTimeout(() => tone(f, 0.15, "square", 0.06), i * 90)),
+    gameover: () => tone(400, 1.4, "triangle", 0.15, 80),
 };
 
 export const isMuted = () => muted;
 
 /** Idle: suspend the AudioContext (stops the engine loop's CPU work); unlock() resumes it. */
 export function suspendAudio() {
-    if (ctx && ctx.state === 'running') void ctx.suspend();
+    if (ctx && ctx.state === "running") void ctx.suspend();
 }

@@ -36,8 +36,8 @@
  * See also: game.ts, view.ts (build), scripts/check.ts; DESIGN.md "4. Coordinate system" and
  * "5. Level generation".
  */
-import { planetName } from './names';
-import { rng } from './random';
+import { planetName } from "./names";
+import { rng } from "./random";
 
 export interface Pt {
     x: number;
@@ -125,9 +125,8 @@ export function difficulty(n: number): Difficulty {
     };
 }
 
-
 /** The grid part of a Level: enough for the cell tests (and usable before a Level exists). */
-export type Grid = Pick<Level, 'w' | 'h' | 'grid'>;
+export type Grid = Pick<Level, "w" | "h" | "grid">;
 
 /**
  * Is integer cell (x, y) rock? The one rule every module shares: left / right of the grid and

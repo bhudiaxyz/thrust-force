@@ -11,8 +11,8 @@
     --panel-hover: #182648;
     --panel: color-mix(in srgb, var(--panel-base) 86%, transparent);
     --line: color-mix(in srgb, var(--cyan) 35%, transparent);
-    --display: 'Orbitron', ui-sans-serif, system-ui, sans-serif;
-    --body: 'Inter', ui-sans-serif, system-ui, sans-serif;
+    --display: "Orbitron", ui-sans-serif, system-ui, sans-serif;
+    --body: "Inter", ui-sans-serif, system-ui, sans-serif;
 }
 
 * {
@@ -169,7 +169,7 @@ body {
     transition: opacity 0.9s ease;
 }
 .ls-bg::before {
-    content: '';
+    content: "";
     position: absolute;
     inset: 0;
     background:
@@ -186,7 +186,7 @@ body {
     animation: ls-twinkle 4s ease-in-out infinite alternate;
 }
 .ls-bg::after {
-    content: '';
+    content: "";
     position: absolute;
     inset: 0;
     background:
@@ -279,7 +279,7 @@ body {
     opacity: 0.8;
 }
 .ls-rule::after {
-    content: '';
+    content: "";
     position: absolute;
     left: 50%;
     top: 50%;
@@ -433,7 +433,7 @@ body {
     color: var(--cyan);
     text-shadow: 0 0 10px color-mix(in srgb, var(--cyan) 60%, transparent);
 }
-#pause[data-kind='over'] h2 {
+#pause[data-kind="over"] h2 {
     color: var(--hot);
     text-shadow: 0 0 10px color-mix(in srgb, var(--hot) 60%, transparent);
 }
@@ -476,10 +476,10 @@ body {
     background: color-mix(in srgb, var(--cyan) 10%, transparent);
     border-color: color-mix(in srgb, var(--cyan) 60%, transparent);
 }
-#pause[data-kind='over'] #pause-resume {
+#pause[data-kind="over"] #pause-resume {
     display: none;
 }
-#pause[data-kind='over'] #pause-restart {
+#pause[data-kind="over"] #pause-restart {
     color: var(--amber);
     border-color: color-mix(in srgb, var(--amber) 60%, transparent);
 }
@@ -635,7 +635,7 @@ body {
     #touch button.on {
         background: color-mix(in srgb, var(--cyan) 30%, transparent);
     }
-    #touch [data-k='thrust'] {
+    #touch [data-k="thrust"] {
         width: 72px;
         height: 72px;
     }

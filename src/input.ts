@@ -30,48 +30,48 @@
  *
  * See also: main.ts, game.ts (Input), index.html (#joy, #touch); DESIGN.md "9. Input".
  */
-import nipplejs from 'nipplejs';
-import type { Input } from './game';
-import { COLORS } from './palette';
+import nipplejs from "nipplejs";
+import type { Input } from "./game";
+import { COLORS } from "./palette";
 
-export const isTouch = matchMedia('(pointer: coarse)').matches;
+export const isTouch = matchMedia("(pointer: coarse)").matches;
 
 /** Held state from keys and touch buttons. Read through steer(), which adds the stick. */
 const held: Input = { left: false, right: false, thrust: false, fire: false, shield: false };
 
 export const KEYS: Record<string, keyof Input> = {
-    ArrowLeft: 'left',
-    KeyA: 'left',
-    KeyZ: 'left',
-    ArrowRight: 'right',
-    KeyD: 'right',
-    KeyX: 'right',
-    ArrowUp: 'thrust',
-    KeyW: 'thrust',
-    ShiftRight: 'thrust',
-    Space: 'fire',
-    ArrowDown: 'shield',
-    KeyS: 'shield',
-    ShiftLeft: 'shield',
+    ArrowLeft: "left",
+    KeyA: "left",
+    KeyZ: "left",
+    ArrowRight: "right",
+    KeyD: "right",
+    KeyX: "right",
+    ArrowUp: "thrust",
+    KeyW: "thrust",
+    ShiftRight: "thrust",
+    Space: "fire",
+    ArrowDown: "shield",
+    KeyS: "shield",
+    ShiftLeft: "shield",
 };
 
 const KEY_HELP = [
-    ['← → / A D', 'Rotate'],
-    ['↑ / W', 'Thrust'],
-    ['Space', 'Fire'],
-    ['↓ / S / Shift', 'Shield + tractor'],
-    ['Esc / P', 'Pause'],
-    ['M', 'Sound on / off'],
-    ['N', 'Minimap'],
+    ["← → / A D", "Rotate"],
+    ["↑ / W", "Thrust"],
+    ["Space", "Fire"],
+    ["↓ / S / Shift", "Shield + tractor"],
+    ["Esc / P", "Pause"],
+    ["M", "Sound on / off"],
+    ["N", "Minimap"],
 ];
 const TOUCH_HELP = [
-    ['Left stick', 'Aim the nose'],
-    ['Stick full', 'Thrust'],
-    ['▲', 'Thrust'],
-    ['●', 'Fire'],
-    ['◎', 'Shield + tractor'],
-    ['❚❚', 'Pause'],
-    ['Map icon', 'Minimap'],
+    ["Left stick", "Aim the nose"],
+    ["Stick full", "Thrust"],
+    ["▲", "Thrust"],
+    ["●", "Fire"],
+    ["◎", "Shield + tractor"],
+    ["❚❚", "Pause"],
+    ["Map icon", "Minimap"],
 ];
 export const HELP = isTouch ? TOUCH_HELP : KEY_HELP;
 
@@ -79,44 +79,44 @@ const STICK = 120; // nipplejs size in px
 let stick: { x: number; y: number; push: number } | null = null;
 
 export function setupInput() {
-    addEventListener('keydown', (e) => {
+    addEventListener("keydown", (e) => {
         const k = KEYS[e.code];
         if (!k) return;
         held[k] = true;
         e.preventDefault();
     });
-    addEventListener('keyup', (e) => {
+    addEventListener("keyup", (e) => {
         const k = KEYS[e.code];
         if (k) held[k] = false;
     });
 
-    document.querySelectorAll<HTMLElement>('#touch [data-k]').forEach((btn) => {
+    document.querySelectorAll<HTMLElement>("#touch [data-k]").forEach((btn) => {
         const k = btn.dataset.k as keyof Input;
         const set = (v: boolean) => (e: PointerEvent) => {
             e.preventDefault();
             held[k] = v;
-            btn.classList.toggle('on', v);
+            btn.classList.toggle("on", v);
         };
-        btn.addEventListener('pointerdown', (e) => {
+        btn.addEventListener("pointerdown", (e) => {
             btn.setPointerCapture(e.pointerId);
             set(true)(e);
         });
-        btn.addEventListener('pointerup', set(false));
-        btn.addEventListener('pointercancel', set(false));
+        btn.addEventListener("pointerup", set(false));
+        btn.addEventListener("pointercancel", set(false));
     });
 
     const joy = nipplejs.create({
-        zone: document.getElementById('joy')!,
-        mode: 'dynamic',
+        zone: document.getElementById("joy")!,
+        mode: "dynamic",
         size: STICK,
         color: COLORS.ui.stick,
         restOpacity: 0.6,
     });
-    joy.on('move', (evt) => {
+    joy.on("move", (evt) => {
         const d = evt.data;
         if (d?.vector) stick = { x: d.vector.x, y: d.vector.y, push: d.distance / (STICK / 2) };
     });
-    joy.on('end', () => (stick = null));
+    joy.on("end", () => (stick = null));
 }
 
 export function clearInput() {

@@ -27,9 +27,9 @@
  *
  * See also: main.ts, level.ts (grid, surface), index.html (#minimap); DESIGN.md "10. UI".
  */
-import type { Game } from './game';
-import { isRock, type Level } from './level';
-import { COLORS } from './palette';
+import type { Game } from "./game";
+import { isRock, type Level } from "./level";
+import { COLORS } from "./palette";
 
 const M = COLORS.minimap;
 
@@ -39,7 +39,7 @@ const MAX_W = 150,
 export class Minimap {
     private canvas: HTMLCanvasElement;
     private ctx: CanvasRenderingContext2D;
-    private bake = document.createElement('canvas');
+    private bake = document.createElement("canvas");
     private level: Level | null = null;
     private scale = 1; // CSS px per cell
     private dpr = Math.min(devicePixelRatio || 1, 2);
@@ -48,13 +48,13 @@ export class Minimap {
     private chosen = false;
 
     constructor(private root: HTMLElement) {
-        this.canvas = root.querySelector('canvas')!;
-        this.ctx = this.canvas.getContext('2d')!;
+        this.canvas = root.querySelector("canvas")!;
+        this.ctx = this.canvas.getContext("2d")!;
         this.fit();
-        addEventListener('resize', () => this.fit());
-        root.addEventListener('click', () => this.toggle());
+        addEventListener("resize", () => this.fit());
+        root.addEventListener("click", () => this.toggle());
         // Don't take focus on press, or Space (fire) would then "click" the button.
-        root.addEventListener('pointerdown', (e) => e.preventDefault());
+        root.addEventListener("pointerdown", (e) => e.preventDefault());
     }
 
     private last: Game | null = null;
@@ -68,12 +68,12 @@ export class Minimap {
     private fit() {
         if (this.chosen) return;
         const roomy = innerWidth >= MAX_W * 4 && innerHeight >= MAX_H * 2.4;
-        this.root.classList.toggle('collapsed', !roomy);
+        this.root.classList.toggle("collapsed", !roomy);
     }
 
     toggle() {
         this.chosen = true;
-        this.root.classList.toggle('collapsed');
+        this.root.classList.toggle("collapsed");
         if (this.last) this.draw(this.last); // so it isn't blank when opened while paused
     }
 
@@ -82,7 +82,7 @@ export class Minimap {
         const { w, h } = lv;
         this.bake.width = w;
         this.bake.height = h;
-        const bctx = this.bake.getContext('2d')!;
+        const bctx = this.bake.getContext("2d")!;
         const img = bctx.createImageData(w, h);
         const solid = (x: number, y: number) => isRock(lv, x, y);
         for (let y = 0; y < h; y++)
@@ -97,8 +97,10 @@ export class Minimap {
                 const t = y / h;
                 const [lo, hi] = [M.rockLow, M.rockHigh];
                 img.data.set(
-                    edge ? [...M.edge, 255] : [lo[0] + (hi[0] - lo[0]) * t, lo[1] + (hi[1] - lo[1]) * t, lo[2] + (hi[2] - lo[2]) * t, 235],
-                    i,
+                    edge
+                        ? [...M.edge, 255]
+                        : [lo[0] + (hi[0] - lo[0]) * t, lo[1] + (hi[1] - lo[1]) * t, lo[2] + (hi[2] - lo[2]) * t, 235],
+                    i
                 );
             }
         bctx.putImageData(img, 0, 0);
@@ -113,7 +115,7 @@ export class Minimap {
 
     draw(g: Game) {
         this.last = g;
-        if (this.root.classList.contains('collapsed')) return;
+        if (this.root.classList.contains("collapsed")) return;
         const lv = g.level;
         if (lv !== this.level) this.rebake(lv);
         const c = this.ctx,
@@ -134,11 +136,16 @@ export class Minimap {
         for (const t of lv.turrets) if (t.alive) dot(t.x, t.y, 1.5, M.turret);
         const crit = g.critical >= 0;
         if (!(crit && g.critical === 0))
-            dot(lv.reactor.x, lv.reactor.y + 1, 2.5, crit && Math.floor(performance.now() / 150) % 2 ? M.reactorCritical : M.reactor);
+            dot(
+                lv.reactor.x,
+                lv.reactor.y + 1,
+                2.5,
+                crit && Math.floor(performance.now() / 150) % 2 ? M.reactorCritical : M.reactor
+            );
         dot(g.pod.x, g.pod.y, 2, M.pod);
 
         const s = g.ship;
-        if (g.phase === 'play' || g.phase === 'complete') {
+        if (g.phase === "play" || g.phase === "complete") {
             // Camera's rough view (visible half-extent ~ 16 x 12 cells at the default zoom).
             c.strokeStyle = M.view;
             c.lineWidth = this.dpr;

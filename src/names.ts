@@ -23,30 +23,75 @@
  *
  * See also: level.ts, game.ts (arrival message), main.ts (HUD, pause); DESIGN.md "5".
  */
-import { rng } from './random';
+import { rng } from "./random";
 
 export const PLANET_NAMES = [
-    'Avren', 'Kesra', 'Vael', 'Orin', 'Tamsk', 'Ilva', 'Zerith', 'Quell', 'Moru', 'Saphe',
-    'Drav', 'Lunek', 'Ostra', 'Pellin', 'Ravik', 'Sidra', 'Thune', 'Vesk', 'Wyre', 'Xarn',
-    'Yllin', 'Zoma', 'Arvo', 'Belk', 'Corra', 'Dimmet', 'Eskar', 'Fenn', 'Gorrim', 'Halvi',
-    'Iskel', 'Jarrow', 'Lorne', 'Merrow', 'Osk', 'Prell', 'Rhune', 'Skelda', 'Torva', 'Umbrel',
-    'Vantor', 'Wexa', 'Zell', 'Ashkar', 'Brannoc', 'Cindra', 'Delvo', 'Maro', 'Tesk', 'Kordo',
+    "Avren",
+    "Kesra",
+    "Vael",
+    "Orin",
+    "Tamsk",
+    "Ilva",
+    "Zerith",
+    "Quell",
+    "Moru",
+    "Saphe",
+    "Drav",
+    "Lunek",
+    "Ostra",
+    "Pellin",
+    "Ravik",
+    "Sidra",
+    "Thune",
+    "Vesk",
+    "Wyre",
+    "Xarn",
+    "Yllin",
+    "Zoma",
+    "Arvo",
+    "Belk",
+    "Corra",
+    "Dimmet",
+    "Eskar",
+    "Fenn",
+    "Gorrim",
+    "Halvi",
+    "Iskel",
+    "Jarrow",
+    "Lorne",
+    "Merrow",
+    "Osk",
+    "Prell",
+    "Rhune",
+    "Skelda",
+    "Torva",
+    "Umbrel",
+    "Vantor",
+    "Wexa",
+    "Zell",
+    "Ashkar",
+    "Brannoc",
+    "Cindra",
+    "Delvo",
+    "Maro",
+    "Tesk",
+    "Kordo",
 ];
 
 // Clusters (th, dr, ...) only start a word; later syllables use single consonants, so names
 // stay pronounceable.
-const FIRST = ['b', 'd', 'k', 'l', 'm', 'n', 'r', 's', 't', 'v', 'z', 'th', 'dr', 'kr', 'st'];
-const ONSET = ['b', 'd', 'k', 'l', 'm', 'n', 'r', 's', 't', 'v', 'z'];
-const VOWEL = ['a', 'e', 'i', 'o', 'u', 'a', 'e', 'o'];
-const CODA = ['', '', '', 'n', 'r', 'l', 's', 'th', 'x'];
+const FIRST = ["b", "d", "k", "l", "m", "n", "r", "s", "t", "v", "z", "th", "dr", "kr", "st"];
+const ONSET = ["b", "d", "k", "l", "m", "n", "r", "s", "t", "v", "z"];
+const VOWEL = ["a", "e", "i", "o", "u", "a", "e", "o"];
+const CODA = ["", "", "", "n", "r", "l", "s", "th", "x"];
 
 export function planetName(n: number): string {
     if (n >= 1 && n <= PLANET_NAMES.length) return PLANET_NAMES[n - 1];
     const r = rng(n * 104729 + 7);
     const pick = (a: string[]) => a[Math.floor(r() * a.length)];
     const syllables = r() < 0.6 ? 2 : 3;
-    let word = '';
+    let word = "";
     for (let i = 0; i < syllables; i++)
-        word += pick(i ? ONSET : FIRST) + pick(VOWEL) + (i === syllables - 1 ? pick(CODA) : '');
+        word += pick(i ? ONSET : FIRST) + pick(VOWEL) + (i === syllables - 1 ? pick(CODA) : "");
     return word[0].toUpperCase() + word.slice(1);
 }

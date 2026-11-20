@@ -27,13 +27,13 @@
  * See also: src/level.ts, src/game.ts, src/tier.ts, scripts/smoke.py; DESIGN.md
  * "13. Checks and tooling".
  */
-import assert from 'node:assert/strict';
-import { difficulty, generateLevel, MAX_DIFFICULTY_AT, solidAt, type Difficulty } from '../src/level';
-import { evenGlow, NEON_LUMA, PLANET_THEMES, themeFor } from '../src/palette';
-import { PLANET_NAMES, planetName } from '../src/names';
-import { Game, rod, type Input } from '../src/game';
-import { classifyGpu } from '../src/tier';
-import { BLOCK, blockAt } from '../src/rock';
+import assert from "node:assert/strict";
+import { difficulty, generateLevel, MAX_DIFFICULTY_AT, solidAt, type Difficulty } from "../src/level";
+import { evenGlow, NEON_LUMA, PLANET_THEMES, themeFor } from "../src/palette";
+import { PLANET_NAMES, planetName } from "../src/names";
+import { Game, rod, type Input } from "../src/game";
+import { classifyGpu } from "../src/tier";
+import { BLOCK, blockAt } from "../src/rock";
 
 for (let n = 1; n <= 50; n++) {
     const lv = generateLevel(n);
@@ -84,7 +84,7 @@ for (let n = 1; n <= 50; n++) {
         b.x += b.vx * h;
         b.y += b.vy * h;
         rod(a, 1, b, 1.6, 4.5);
-        assert.ok(Math.abs(Math.hypot(b.x - a.x, b.y - a.y) - 4.5) < 1e-9, 'rod stretched');
+        assert.ok(Math.abs(Math.hypot(b.x - a.x, b.y - a.y) - 4.5) < 1e-9, "rod stretched");
     }
 }
 
@@ -92,66 +92,66 @@ for (let n = 1; n <= 50; n++) {
     const g = new Game(1);
     const idle: Input = { left: false, right: false, thrust: false, fire: false, shield: false };
     let booms = 0;
-    g.onEvent = (e) => e === 'bigBoom' && booms++;
+    g.onEvent = (e) => e === "bigBoom" && booms++;
     // Tilt the ship so it can't land softly, then let it fall.
     g.ship.a = 1.2;
     for (let i = 0; i < 120 * 20 && booms === 0; i++) g.update(1 / 120, idle);
-    assert.equal(booms, 1, 'idle ship should crash');
+    assert.equal(booms, 1, "idle ship should crash");
     assert.equal(g.lives, 2);
     for (let i = 0; i < 120 * 3; i++) g.update(1 / 120, idle);
-    assert.equal(g.phase, 'play', 'should respawn');
+    assert.equal(g.phase, "play", "should respawn");
 }
 
 {
     // Grab the pod from a hover closer than the rod length, then lift it clear: no crash.
     const g = new Game(1);
     let died = false;
-    g.onEvent = (e) => e === 'bigBoom' && (died = true);
+    g.onEvent = (e) => e === "bigBoom" && (died = true);
     const lv = g.level;
     lv.turrets.length = 0;
     Object.assign(g.ship, { x: lv.pod.x, y: lv.pod.y + 3.2, vx: 0, vy: 0, a: 0 });
     const grab: Input = { left: false, right: false, thrust: false, fire: false, shield: true };
     // Hover: thrust half the time to roughly cancel gravity, while holding the beam.
     for (let i = 0; i < 120 * 3; i++) g.update(1 / 120, { ...grab, thrust: g.ship.vy < 0.8 });
-    assert.ok(g.pod.attached, 'pod not attached');
-    assert.ok(!died, 'grabbing the pod crashed');
-    assert.ok(g.pod.y > lv.pod.y + 0.3, 'pod not lifted');
+    assert.ok(g.pod.attached, "pod not attached");
+    assert.ok(!died, "grabbing the pod crashed");
+    assert.ok(g.pod.y > lv.pod.y + 0.3, "pod not lifted");
 
     // Carry it out through the sky: level completes, bonus paid, next planet loads.
     Object.assign(g.ship, { x: lv.w / 2, y: lv.exitY + 0.5, vx: 0, vy: 0 });
     Object.assign(g.pod, { x: lv.w / 2, y: lv.exitY + 0.5 - g.pod.len, vx: 0, vy: 0 });
     g.update(1 / 60, grab);
-    assert.equal(g.phase, 'complete');
+    assert.equal(g.phase, "complete");
     assert.ok(g.score >= 4500, `bonus not paid: ${g.score}`);
     for (let i = 0; i < 120 * 4; i++) g.update(1 / 120, grab);
-    assert.equal(g.levelNo, 2, 'next planet not loaded');
+    assert.equal(g.levelNo, 2, "next planet not loaded");
 }
 
 {
     const t = (renderer: string, mobile = false, cores = 8, memGB?: number) =>
         classifyGpu({ renderer, mobile, cores, memGB });
     // Desktop / laptop.
-    assert.equal(t('ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 Direct3D11)'), 'high');
-    assert.equal(t('ANGLE (NVIDIA, NVIDIA GeForce GTX 1650 Direct3D11)'), 'high');
-    assert.equal(t('ANGLE (NVIDIA, NVIDIA GeForce GTX 1050 Ti Direct3D11)'), 'mid'); // 2016 entry discrete
-    assert.equal(t('ANGLE (NVIDIA, NVIDIA GeForce MX250 Direct3D11)'), 'mid'); // 2019 laptop
-    assert.equal(t('Apple M1'), 'high');
-    assert.equal(t('ANGLE (Intel, Intel(R) Iris(R) Xe Graphics Direct3D11)'), 'mid');
-    assert.equal(t('ANGLE (AMD, AMD Radeon(TM) Vega 8 Graphics Direct3D11)'), 'mid'); // 2018-19 Ryzen laptop
-    assert.equal(t('ANGLE (Intel, Intel(R) UHD Graphics 620 Direct3D11)'), 'low'); // 2017-19 laptop
-    assert.equal(t('ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device))'), 'low');
-    assert.equal(t('ANGLE (NVIDIA GeForce RTX 3060)', false, 8, 2), 'low'); // 2 GB RAM
+    assert.equal(t("ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 Direct3D11)"), "high");
+    assert.equal(t("ANGLE (NVIDIA, NVIDIA GeForce GTX 1650 Direct3D11)"), "high");
+    assert.equal(t("ANGLE (NVIDIA, NVIDIA GeForce GTX 1050 Ti Direct3D11)"), "mid"); // 2016 entry discrete
+    assert.equal(t("ANGLE (NVIDIA, NVIDIA GeForce MX250 Direct3D11)"), "mid"); // 2019 laptop
+    assert.equal(t("Apple M1"), "high");
+    assert.equal(t("ANGLE (Intel, Intel(R) Iris(R) Xe Graphics Direct3D11)"), "mid");
+    assert.equal(t("ANGLE (AMD, AMD Radeon(TM) Vega 8 Graphics Direct3D11)"), "mid"); // 2018-19 Ryzen laptop
+    assert.equal(t("ANGLE (Intel, Intel(R) UHD Graphics 620 Direct3D11)"), "low"); // 2017-19 laptop
+    assert.equal(t("ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device))"), "low");
+    assert.equal(t("ANGLE (NVIDIA GeForce RTX 3060)", false, 8, 2), "low"); // 2 GB RAM
     // Phones and tablets.
-    assert.equal(t('Apple GPU', true, 4), 'mobile-high'); // any iPad / iPhone (Safari masks the model)
-    assert.equal(t('Adreno (TM) 730', true), 'mobile-high'); // Galaxy S22 (Snapdragon)
-    assert.equal(t('Samsung Xclipse 920', true), 'mobile-high'); // Galaxy S22 (Exynos)
-    assert.equal(t('Adreno (TM) 740', true), 'mobile-high');
-    assert.equal(t('Mali-G710', true), 'mobile-high'); // Pixel 7 / Dimensity 9000
-    assert.equal(t('Adreno (TM) 640', true), 'mid'); // Galaxy S10 (2019)
-    assert.equal(t('Mali-G76', true), 'mid'); // Galaxy S10 Exynos (2019)
-    assert.equal(t('Mali-G78', true), 'mid');
-    assert.equal(t('Adreno (TM) 618', true), 'low'); // budget 2019-20
-    assert.equal(t('Mali-G52', true), 'low');
+    assert.equal(t("Apple GPU", true, 4), "mobile-high"); // any iPad / iPhone (Safari masks the model)
+    assert.equal(t("Adreno (TM) 730", true), "mobile-high"); // Galaxy S22 (Snapdragon)
+    assert.equal(t("Samsung Xclipse 920", true), "mobile-high"); // Galaxy S22 (Exynos)
+    assert.equal(t("Adreno (TM) 740", true), "mobile-high");
+    assert.equal(t("Mali-G710", true), "mobile-high"); // Pixel 7 / Dimensity 9000
+    assert.equal(t("Adreno (TM) 640", true), "mid"); // Galaxy S10 (2019)
+    assert.equal(t("Mali-G76", true), "mid"); // Galaxy S10 Exynos (2019)
+    assert.equal(t("Mali-G78", true), "mid");
+    assert.equal(t("Adreno (TM) 618", true), "low"); // budget 2019-20
+    assert.equal(t("Mali-G52", true), "low");
 }
 
 {
@@ -180,8 +180,16 @@ for (let n = 1; n <= 50; n++) {
 
 {
     // Difficulty only ever gets harder planet to planet, saturating at MAX_DIFFICULTY_AT.
-    const harder: (keyof Difficulty)[] = ['gravity', 'depth', 'turns', 'turrets', 'reactorHp', 'bulletSpeed', 'branches'];
-    const easier: (keyof Difficulty)[] = ['radius', 'minRadius', 'turretInterval', 'aimSpread'];
+    const harder: (keyof Difficulty)[] = [
+        "gravity",
+        "depth",
+        "turns",
+        "turrets",
+        "reactorHp",
+        "bulletSpeed",
+        "branches",
+    ];
+    const easier: (keyof Difficulty)[] = ["radius", "minRadius", "turretInterval", "aimSpread"];
     for (let n = 2; n <= MAX_DIFFICULTY_AT + 5; n++) {
         const a = difficulty(n - 1),
             b = difficulty(n);
@@ -189,12 +197,12 @@ for (let n = 1; n <= 50; n++) {
         for (const k of easier) assert.ok(b[k] <= a[k], `${k} rose at planet ${n}`);
     }
     assert.deepEqual(difficulty(MAX_DIFFICULTY_AT), difficulty(MAX_DIFFICULTY_AT + 10));
-    assert.ok(difficulty(1).minRadius > 4, 'planet 1 should be roomy');
+    assert.ok(difficulty(1).minRadius > 4, "planet 1 should be roomy");
 
     // Themes: consecutive planets never share a theme within a full cycle.
     const names = new Set(Array.from({ length: PLANET_THEMES.length }, (_, i) => themeFor(i + 1).name));
     assert.equal(names.size, PLANET_THEMES.length);
-    assert.equal(themeFor(PLANET_THEMES.length + 1), themeFor(1), 'themes should cycle');
+    assert.equal(themeFor(PLANET_THEMES.length + 1), themeFor(1), "themes should cycle");
     for (const t of PLANET_THEMES) {
         const [r, g, b] = evenGlow(t.neon);
         assert.ok(Math.abs(0.2126 * r + 0.7152 * g + 0.0722 * b - NEON_LUMA) < 1e-9, `${t.name}: uneven glow`);
@@ -203,12 +211,12 @@ for (let n = 1; n <= 50; n++) {
 
 {
     // Planet names: the 50 hand-picked ones are unique; every name is one capitalised word.
-    assert.equal(PLANET_NAMES.length, MAX_DIFFICULTY_AT, 'one hand-picked name per planet up to full difficulty');
-    assert.equal(new Set(PLANET_NAMES).size, PLANET_NAMES.length, 'duplicate planet name');
+    assert.equal(PLANET_NAMES.length, MAX_DIFFICULTY_AT, "one hand-picked name per planet up to full difficulty");
+    assert.equal(new Set(PLANET_NAMES).size, PLANET_NAMES.length, "duplicate planet name");
     for (let n = 1; n <= 300; n++) assert.match(planetName(n), /^[A-Z][a-z]+$/, `planet ${n}: "${planetName(n)}"`);
-    assert.equal(planetName(1), 'Avren');
-    assert.equal(planetName(77), planetName(77), 'generated names must be stable');
+    assert.equal(planetName(1), "Avren");
+    assert.equal(planetName(77), planetName(77), "generated names must be stable");
     assert.equal(generateLevel(3).name, planetName(3));
 }
 
-console.log('check: ok');
+console.log("check: ok");
