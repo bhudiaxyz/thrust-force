@@ -1,0 +1,594 @@
+/* Neon arcade theme: deep space, cyan instruments, amber warnings. */
+:root {
+    --bg: #05060f;
+    --ink: #e6f4ff;
+    --ink-soft: rgba(230, 244, 255, 0.7);
+    --cyan: #66e0ff;
+    --amber: #ffc85a;
+    --hot: #ff5a3c;
+    --panel: rgba(6, 10, 24, 0.86);
+    --line: rgba(102, 224, 255, 0.35);
+    --display: 'Orbitron', ui-sans-serif, system-ui, sans-serif;
+    --body: 'Inter', ui-sans-serif, system-ui, sans-serif;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html,
+body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--body);
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+}
+
+#app canvas {
+    display: block;
+}
+
+[hidden] {
+    display: none !important;
+}
+
+/* HUD */
+#hud {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    font-family: var(--display);
+    text-shadow: 0 0 8px rgba(102, 224, 255, 0.6);
+}
+.h-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    padding: max(0.8rem, env(safe-area-inset-top)) 1.2rem 0;
+    font-size: clamp(0.8rem, 2vw, 1.1rem);
+}
+.h-label {
+    display: block;
+    font-size: 0.65em;
+    color: var(--ink-soft);
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+}
+.h-mid {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.2rem;
+}
+#h-lives {
+    color: var(--cyan);
+    letter-spacing: 0.3em;
+}
+.h-bars {
+    display: grid;
+    gap: 0.35rem;
+    font-size: 0.65em;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+}
+.h-bars label {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.5rem;
+}
+.bar {
+    display: block;
+    width: clamp(70px, 14vw, 160px);
+    height: 8px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    overflow: hidden;
+}
+.bar span {
+    display: block;
+    height: 100%;
+    background: var(--cyan);
+    box-shadow: 0 0 10px var(--cyan);
+    transition: width 0.1s linear;
+}
+.bar span.low {
+    background: var(--hot);
+    animation: blink 0.5s steps(2) infinite;
+}
+.bar--hot span {
+    background: var(--amber);
+    box-shadow: 0 0 10px var(--amber);
+}
+#h-count {
+    position: absolute;
+    top: 18%;
+    width: 100%;
+    text-align: center;
+    font-size: clamp(2.5rem, 9vw, 5rem);
+    font-weight: 900;
+    color: var(--hot);
+    text-shadow: 0 0 20px var(--hot);
+}
+#h-msg {
+    position: absolute;
+    bottom: 22%;
+    width: 100%;
+    text-align: center;
+    font-size: clamp(0.9rem, 2.6vw, 1.4rem);
+    color: var(--amber);
+    text-shadow: 0 0 12px rgba(255, 200, 90, 0.7);
+    padding: 0 1rem;
+}
+@keyframes blink {
+    50% {
+        opacity: 0.3;
+    }
+}
+
+/* Splash (#boot): deep-space backdrop with twinkling stars and a faint cyan scan grid, an
+ * emblem of the ship circled by two counter-rotating orbits with the pod riding one, the title,
+ * a progress line during loading, then the launch button and control hints. */
+#boot {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: grid;
+    place-items: center;
+    background: var(--bg);
+    transition: opacity 0.7s ease;
+}
+#boot.ready {
+    cursor: pointer;
+    background: transparent;
+}
+#boot.dismissed {
+    opacity: 0;
+    pointer-events: none;
+}
+#boot.gone {
+    visibility: hidden;
+}
+.ls-bg {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    background: radial-gradient(ellipse at 50% 40%, #0d1430 0%, var(--bg) 72%);
+    transition: opacity 0.9s ease;
+}
+.ls-bg::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+        radial-gradient(1.4px 1.4px at 9% 14%, #fff 50%, transparent 51%),
+        radial-gradient(1px 1px at 21% 72%, rgba(255, 255, 255, 0.7) 50%, transparent 51%),
+        radial-gradient(1.2px 1.2px at 33% 26%, #cdf4ff 50%, transparent 51%),
+        radial-gradient(1px 1px at 47% 88%, rgba(255, 255, 255, 0.6) 50%, transparent 51%),
+        radial-gradient(1.4px 1.4px at 64% 11%, #fff 50%, transparent 51%),
+        radial-gradient(1px 1px at 76% 64%, rgba(255, 220, 160, 0.7) 50%, transparent 51%),
+        radial-gradient(1.2px 1.2px at 88% 30%, #cdf4ff 50%, transparent 51%),
+        radial-gradient(1px 1px at 93% 82%, rgba(255, 255, 255, 0.6) 50%, transparent 51%),
+        radial-gradient(1px 1px at 4% 52%, rgba(255, 255, 255, 0.6) 50%, transparent 51%),
+        radial-gradient(1.2px 1.2px at 56% 46%, rgba(255, 255, 255, 0.5) 50%, transparent 51%);
+    animation: ls-twinkle 4s ease-in-out infinite alternate;
+}
+.ls-bg::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+        repeating-linear-gradient(0deg, rgba(102, 224, 255, 0.06) 0 1px, transparent 1px 64px),
+        repeating-linear-gradient(90deg, rgba(102, 224, 255, 0.06) 0 1px, transparent 1px 64px);
+    -webkit-mask-image: radial-gradient(ellipse at center, #000 15%, transparent 70%);
+    mask-image: radial-gradient(ellipse at center, #000 15%, transparent 70%);
+}
+#boot.ready .ls-bg {
+    opacity: 0.6;
+}
+.ls-frame {
+    position: relative;
+    text-align: center;
+    padding: 0 32px;
+}
+.ls-emblem {
+    position: relative;
+    width: 96px;
+    height: 96px;
+    margin: 0 auto 36px;
+}
+.ls-orbit {
+    position: absolute;
+    inset: 0;
+    border: 1px solid rgba(102, 224, 255, 0.55);
+    border-radius: 50%;
+    transform: rotateX(68deg);
+    animation: ls-spin 6s linear infinite;
+    box-shadow: 0 0 12px rgba(102, 224, 255, 0.35);
+}
+.ls-orbit--inner {
+    inset: 14px;
+    border-color: rgba(255, 200, 90, 0.5);
+    transform: rotateY(68deg);
+    animation-direction: reverse;
+    animation-duration: 4s;
+    box-shadow: 0 0 12px rgba(255, 200, 90, 0.3);
+}
+.ls-ship {
+    position: absolute;
+    inset: 26px;
+    fill: none;
+    stroke: var(--cyan);
+    stroke-width: 2;
+    stroke-linejoin: round;
+    filter: drop-shadow(0 0 6px var(--cyan));
+    animation: ls-bob 2.4s ease-in-out infinite;
+}
+.ls-pod {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 9px;
+    height: 9px;
+    margin: -4.5px;
+    border-radius: 50%;
+    background: var(--amber);
+    box-shadow: 0 0 10px var(--amber);
+    animation: ls-orbit-pod 3.2s linear infinite;
+}
+.ls-title {
+    font-family: var(--display);
+    font-weight: 900;
+    font-size: clamp(2.4rem, 8vw, 4.2rem);
+    letter-spacing: 0.1em;
+    padding-left: 0.1em;
+    line-height: 1;
+    text-transform: uppercase;
+    color: var(--cyan);
+    text-shadow:
+        0 0 12px rgba(102, 224, 255, 0.8),
+        0 0 42px rgba(102, 224, 255, 0.4);
+}
+.ls-title span {
+    display: block;
+    margin-top: 0.45rem;
+    font-size: 0.48em;
+    letter-spacing: 0.62em;
+    padding-left: 0.62em;
+    color: var(--amber);
+    text-shadow: 0 0 12px rgba(255, 200, 90, 0.7);
+}
+.ls-rule {
+    position: relative;
+    width: min(360px, 64vw);
+    height: 1px;
+    margin: 22px auto 16px;
+    background: linear-gradient(90deg, transparent, var(--cyan) 20%, var(--cyan) 80%, transparent);
+    opacity: 0.8;
+}
+.ls-rule::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 7px;
+    height: 7px;
+    background: var(--bg);
+    border: 1px solid var(--amber);
+    transform: translate(-50%, -50%) rotate(45deg);
+}
+.ls-sub {
+    font-size: 15px;
+    letter-spacing: 0.04em;
+    color: var(--ink-soft);
+}
+.ls-sub.error {
+    color: #ffb4a8;
+}
+.ls-bar {
+    width: min(300px, 70vw);
+    height: 2px;
+    margin: 40px auto 16px;
+    background: rgba(102, 224, 255, 0.15);
+    overflow: hidden;
+}
+.ls-bar span {
+    display: block;
+    width: 0;
+    height: 100%;
+    background: var(--cyan);
+    box-shadow: 0 0 10px var(--cyan);
+    transition: width 0.25s ease;
+}
+.ls-tip,
+.ls-controls {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: rgba(230, 244, 255, 0.5);
+}
+.ls-tip {
+    animation: pulse 2.4s ease-in-out infinite;
+}
+.ls-best {
+    margin-top: 28px;
+    font-family: var(--display);
+    color: var(--amber);
+    min-height: 1em;
+}
+.ls-enter {
+    display: none;
+    margin: 18px auto 0;
+    padding: 12px 28px;
+    font: 700 12px var(--display);
+    letter-spacing: 0.24em;
+    text-transform: uppercase;
+    color: var(--cyan);
+    border: 1px solid rgba(102, 224, 255, 0.6);
+    border-radius: 4px;
+    background: rgba(102, 224, 255, 0.08);
+    box-shadow: 0 0 24px rgba(102, 224, 255, 0.2);
+    cursor: pointer;
+    animation: pulse 2.4s ease-in-out infinite;
+}
+.ls-controls {
+    display: none;
+    margin-top: 22px;
+    white-space: pre-wrap;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+}
+#boot.ready .ls-bar,
+#boot.ready .ls-tip {
+    display: none;
+}
+#boot.ready .ls-enter,
+#boot.ready .ls-controls {
+    display: block;
+}
+@keyframes pulse {
+    0%,
+    100% {
+        opacity: 0.55;
+    }
+    50% {
+        opacity: 1;
+    }
+}
+@keyframes ls-twinkle {
+    from {
+        opacity: 0.5;
+    }
+    to {
+        opacity: 1;
+    }
+}
+@keyframes ls-spin {
+    to {
+        rotate: 360deg;
+    }
+}
+@keyframes ls-bob {
+    50% {
+        transform: translateY(-4px);
+    }
+}
+@keyframes ls-orbit-pod {
+    from {
+        transform: rotate(0deg) translateX(48px) scale(1);
+    }
+    50% {
+        transform: rotate(180deg) translateX(48px) scale(0.7);
+    }
+    to {
+        transform: rotate(360deg) translateX(48px) scale(1);
+    }
+}
+
+/* Pause / game over: blurred backdrop, a dark panel with a cyan hairline, key bindings. */
+#pause {
+    position: fixed;
+    inset: 0;
+    z-index: 45;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    background: rgba(5, 6, 15, 0.55);
+    backdrop-filter: blur(10px) saturate(1.1);
+}
+#pause.open {
+    display: flex;
+}
+#pause .panel {
+    width: min(380px, 100%);
+    max-height: 100%;
+    overflow-y: auto;
+    padding: 20px 22px 22px;
+    border-radius: 8px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    box-shadow:
+        0 0 40px rgba(102, 224, 255, 0.12),
+        0 18px 48px rgba(0, 0, 0, 0.55);
+}
+#pause h2 {
+    margin-bottom: 6px;
+    font: 700 20px/1 var(--display);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--cyan);
+    text-shadow: 0 0 10px rgba(102, 224, 255, 0.6);
+}
+#pause[data-kind='over'] h2 {
+    color: var(--hot);
+    text-shadow: 0 0 10px rgba(255, 90, 60, 0.6);
+}
+#pause .p-score {
+    min-height: 1em;
+    padding-bottom: 12px;
+    margin-bottom: 16px;
+    border-bottom: 1px solid var(--line);
+    font: 500 12px var(--display);
+    color: var(--amber);
+}
+#pause nav {
+    display: grid;
+    gap: 8px;
+}
+#pause button {
+    width: 100%;
+    height: 42px;
+    padding: 0 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: rgba(15, 24, 48, 0.8);
+    color: var(--ink-soft);
+    font: 600 11px/1 var(--body);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    cursor: pointer;
+}
+#pause button:hover,
+#pause button:focus-visible {
+    outline: none;
+    border-color: var(--cyan);
+    background: rgba(24, 38, 72, 0.95);
+}
+#pause #pause-resume {
+    color: var(--cyan);
+    background: rgba(102, 224, 255, 0.1);
+    border-color: rgba(102, 224, 255, 0.6);
+}
+#pause[data-kind='over'] #pause-resume {
+    display: none;
+}
+#pause[data-kind='over'] #pause-restart {
+    color: var(--amber);
+    border-color: rgba(255, 200, 90, 0.6);
+}
+#pause kbd {
+    min-width: 22px;
+    height: 20px;
+    padding: 0 5px;
+    display: inline-grid;
+    place-items: center;
+    border-radius: 4px;
+    background: rgba(102, 224, 255, 0.12);
+    color: var(--cyan);
+    font: 700 9px/1 var(--body);
+    white-space: nowrap;
+}
+#pause .controls {
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid rgba(102, 224, 255, 0.12);
+}
+#pause h3 {
+    margin-bottom: 10px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: rgba(230, 244, 255, 0.5);
+}
+#pause .bindings {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px 10px;
+}
+#pause .binding {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--ink-soft);
+}
+#pause .p-help {
+    margin-top: 14px;
+    font-size: 11px;
+    line-height: 1.5;
+    color: rgba(230, 244, 255, 0.55);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .ls-orbit,
+    .ls-ship,
+    .ls-pod,
+    .ls-bg::before,
+    .ls-enter,
+    .ls-tip {
+        animation: none;
+    }
+}
+
+/* Touch controls: only on coarse pointers. Left half = steering stick, right = buttons. */
+#touch,
+#joy {
+    display: none;
+}
+@media (pointer: coarse) {
+    #joy {
+        display: block;
+        position: fixed;
+        left: 0;
+        bottom: 0;
+        width: 50%;
+        height: 70%;
+        touch-action: none;
+    }
+    #touch {
+        position: fixed;
+        left: 40%;
+        right: 0;
+        bottom: 0;
+        display: flex;
+        align-items: flex-end;
+        gap: 0.5rem;
+        padding: 0 1rem max(1rem, env(safe-area-inset-bottom));
+        pointer-events: none;
+    }
+    #touch button {
+        pointer-events: auto;
+        flex-shrink: 0;
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+        border: 1px solid var(--line);
+        background: rgba(6, 10, 24, 0.5);
+        color: var(--cyan);
+        font-size: 1.4rem;
+        touch-action: none;
+    }
+    #touch button.on {
+        background: rgba(102, 224, 255, 0.3);
+    }
+    #touch [data-k='thrust'] {
+        width: 72px;
+        height: 72px;
+    }
+    #touch #t-pause {
+        position: fixed;
+        top: max(3.6rem, env(safe-area-inset-top));
+        right: 1rem;
+        width: 40px;
+        height: 40px;
+        font-size: 0.8rem;
+    }
+    .t-gap {
+        flex: 1;
+    }
+}

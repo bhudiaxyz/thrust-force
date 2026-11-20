@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en" style="background: #05060f">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+        <meta
+            name="description"
+            content="Gravity-and-inertia cave shooter. Tow the pod, crack the reactor, escape the planet."
+        />
+        <title>Thrust Force</title>
+        <link
+            rel="icon"
+            href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%2305060f'/><ellipse cx='16' cy='16' rx='14' ry='5' fill='none' stroke='%2366e0ff' stroke-opacity='.6' transform='rotate(-60 16 16)'/><ellipse cx='16' cy='16' rx='10' ry='3.5' fill='none' stroke='%23ffc85a' stroke-opacity='.6'/><path d='M16 8.5 21.5 21.5 16 18.5 10.5 21.5z' fill='none' stroke='%2366e0ff' stroke-width='1.8' stroke-linejoin='round'/><circle cx='26' cy='16' r='2.2' fill='%23ffc85a'/></svg>"
+        />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link
+            href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Inter:wght@400;600&display=swap"
+            rel="stylesheet"
+        />
+    </head>
+    <body>
+        <div id="app"></div>
+
+        <div id="hud" hidden>
+            <div class="h-row">
+                <div><span class="h-label">Score</span><span id="h-score">0</span></div>
+                <div class="h-mid"><span id="h-level"></span><span id="h-lives" aria-label="Ships left"></span></div>
+                <div class="h-bars">
+                    <label
+                        >Fuel<span class="bar"><span id="h-fuel"></span></span
+                    ></label>
+                    <label
+                        >Reactor<span class="bar bar--hot"><span id="h-reactor"></span></span
+                    ></label>
+                </div>
+            </div>
+            <div id="h-count" aria-live="assertive"></div>
+            <div id="h-msg" role="status" aria-live="polite"></div>
+        </div>
+
+        <div id="joy" aria-label="Steering stick: point to aim, push fully to thrust"></div>
+        <div id="touch">
+            <span class="t-gap"></span>
+            <button data-k="shield" aria-label="Shield and tractor beam">◎</button>
+            <button data-k="fire" aria-label="Fire">●</button>
+            <button data-k="thrust" aria-label="Thrust">▲</button>
+            <button id="t-pause" aria-label="Pause">❚❚</button>
+        </div>
+
+        <div id="boot">
+            <div class="ls-bg"></div>
+            <div class="ls-frame">
+                <div class="ls-emblem" aria-hidden="true">
+                    <div class="ls-orbit"></div>
+                    <div class="ls-orbit ls-orbit--inner"></div>
+                    <svg class="ls-ship" viewBox="0 0 40 40">
+                        <path d="M20 4 32 32 20 26 8 32z" />
+                    </svg>
+                    <span class="ls-pod"></span>
+                </div>
+                <h1 class="ls-title">Thrust<span>Force</span></h1>
+                <div class="ls-rule"></div>
+                <p class="ls-sub" role="status" aria-live="polite">
+                    Tow the pod. Crack the reactor. Escape the planet.
+                </p>
+                <div class="ls-bar"><span></span></div>
+                <p class="ls-tip">Loading&hellip;</p>
+                <p class="ls-best"></p>
+                <button class="ls-enter" type="button">Click to launch</button>
+                <p class="ls-controls"></p>
+            </div>
+        </div>
+
+        <div id="pause" data-kind="pause">
+            <div class="panel" role="dialog" aria-modal="true" aria-labelledby="pause-title">
+                <h2 id="pause-title">Paused</h2>
+                <p class="p-score"></p>
+                <nav>
+                    <button type="button" id="pause-resume"><span>Resume</span><kbd>Esc</kbd></button>
+                    <button type="button" id="pause-restart"><span>Restart</span><kbd>R</kbd></button>
+                    <button type="button" id="pause-mute"><span>Sound</span><kbd>M</kbd></button>
+                </nav>
+                <div class="controls">
+                    <h3>Controls</h3>
+                    <div class="bindings"></div>
+                    <p class="p-help">
+                        Hold the tractor beam near the pod to tow it, then fly out through the sky. Beam fuel cells to
+                        refuel. Each reactor hit stuns the turrets; enough hits and it goes critical: ten seconds to get
+                        out.
+                    </p>
+                </div>
+            </div>
+        </div>
+        <script type="module" src="/src/main.ts"></script>
+    </body>
+</html>
