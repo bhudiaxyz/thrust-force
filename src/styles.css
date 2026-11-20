@@ -482,11 +482,51 @@ body {
     text-transform: uppercase;
     cursor: pointer;
 }
+:is(#pause, #sheet) button {
+    transition:
+        border-color 0.15s ease,
+        box-shadow 0.15s ease,
+        background 0.15s ease,
+        color 0.15s ease,
+        transform 0.15s ease;
+}
+/* Highlighted (hover, or selected by keyboard / gamepad): a neon glow like the in-game edges.
+ * :focus rather than :focus-visible, because gamepad navigation moves focus programmatically
+ * and browsers don't always count that as "visible" focus. */
 :is(#pause, #sheet) button:hover,
-:is(#pause, #sheet) button:focus-visible {
+:is(#pause, #sheet) button:focus {
     outline: none;
-    border-color: var(--cyan);
-    background: color-mix(in srgb, var(--panel-hover) 95%, transparent);
+    color: var(--ink);
+    border-color: color-mix(in srgb, var(--cyan) 60%, #ffffff);
+    background: color-mix(in srgb, var(--cyan) 16%, var(--panel-hover));
+    box-shadow:
+        0 0 0 1px color-mix(in srgb, var(--cyan) 50%, transparent),
+        0 0 14px color-mix(in srgb, var(--cyan) 55%, transparent),
+        0 0 30px color-mix(in srgb, var(--cyan) 25%, transparent),
+        inset 0 0 12px color-mix(in srgb, var(--cyan) 22%, transparent);
+    text-shadow: 0 0 8px color-mix(in srgb, var(--cyan) 80%, transparent);
+    transform: translateY(-1px);
+}
+/* Options rows: a focused slider / checkbox / dropdown lights up its row. */
+.opt {
+    padding: 3px 6px;
+    margin: 0 -6px;
+    border-radius: 4px;
+    transition:
+        background 0.15s ease,
+        box-shadow 0.15s ease;
+}
+.opt:hover,
+.opt:focus-within {
+    background: color-mix(in srgb, var(--cyan) 10%, transparent);
+    box-shadow: 0 0 12px color-mix(in srgb, var(--cyan) 25%, transparent);
+}
+.opt :is(input, select):focus {
+    outline: none; /* the glowing row is the focus indicator */
+}
+.opt:focus-within > span {
+    color: var(--cyan);
+    text-shadow: 0 0 8px color-mix(in srgb, var(--cyan) 70%, transparent);
 }
 #pause #pause-resume {
     color: var(--cyan);
@@ -694,17 +734,44 @@ body {
 .ls-menu .menu-btn:first-child {
     animation: pulse 2.4s ease-in-out infinite;
 }
+.ls-menu .menu-btn:is(:hover, :focus) {
+    animation: none; /* a highlighted item holds steady instead of pulsing */
+}
 .menu-btn small {
     font: 500 10px var(--body);
     letter-spacing: 0.06em;
     text-transform: none;
     color: var(--ink-soft);
 }
+.menu-btn {
+    transition:
+        border-color 0.15s ease,
+        box-shadow 0.15s ease,
+        background 0.15s ease,
+        color 0.15s ease,
+        transform 0.15s ease;
+}
+/* Highlighted menu item (hover, keyboard or gamepad): bright neon border, inner + outer glow,
+ * glowing label, a slight lift; it also stops the first item's idle pulse. */
 .menu-btn:hover,
-.menu-btn:focus-visible {
+.menu-btn:focus {
     outline: none;
-    background: color-mix(in srgb, var(--cyan) 18%, transparent);
-    border-color: var(--cyan);
+    color: #e8fbff;
+    border-color: color-mix(in srgb, var(--cyan) 60%, #ffffff);
+    background: color-mix(in srgb, var(--cyan) 20%, transparent);
+    box-shadow:
+        0 0 0 1px color-mix(in srgb, var(--cyan) 55%, transparent),
+        0 0 16px color-mix(in srgb, var(--cyan) 60%, transparent),
+        0 0 36px color-mix(in srgb, var(--cyan) 28%, transparent),
+        inset 0 0 14px color-mix(in srgb, var(--cyan) 25%, transparent);
+    text-shadow: 0 0 10px color-mix(in srgb, var(--cyan) 85%, transparent);
+    transform: translateY(-1px);
+    animation: none;
+    opacity: 1;
+}
+.menu-btn:hover small,
+.menu-btn:focus small {
+    color: var(--ink);
 }
 .menu-btn[disabled] {
     opacity: 0.4;
@@ -957,6 +1024,16 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
+    .menu-btn,
+    :is(#pause, #sheet) button {
+        transition: none;
+    }
+    .menu-btn:hover,
+    .menu-btn:focus,
+    :is(#pause, #sheet) button:hover,
+    :is(#pause, #sheet) button:focus {
+        transform: none;
+    }
     #intro.show {
         animation: none;
         opacity: 1;
