@@ -16,6 +16,8 @@
  *   - build(level) (private): when game.level changes identity, disposes the old level, builds
  *     the cheap parts at once (back wall, stars, pedestal, turrets, fuel cells, reactor) and
  *     queues the rock as horizontal CHUNK-row slices.
+ *     Stars are three STAR_LAYERS at very different depths (z -6..-16, -40..-80, -160..-320),
+ *     so they slide at ~75%, ~35% and ~12% of the playfield's speed: a strong parallax.
  *   - pump(budgetMs, focusY): builds queued rock chunks nearest the ship first until the time
  *     budget is spent (always at least one). sync() calls it with the tier's buildMs, so a new
  *     planet streams in over a few frames instead of freezing one; boot calls it with Infinity.

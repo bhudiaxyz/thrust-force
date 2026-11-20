@@ -1,40 +1,41 @@
 /**
- * Level — seeded cave generator and grid queries for one planet.
+ * Level — seeded cave generator, the difficulty curve, and grid queries for one planet.
  *
  * Purpose
- *   Turns a level number into a playable planet: a W x H occupancy grid (1 = rock, 0 = air,
+ *   Turns a planet number into a playable planet: a W x H occupancy grid (1 = rock, 0 = air,
  *   1 cell = 1 world unit, row 0 at the bottom, y up) with open sky at the top, a hilly surface,
- *   a zig-zag shaft winding down to a flat-floored chamber, and the fixtures placed in it (pod,
- *   reactor, turrets, fuel cells, start point). Also answers the two spatial questions the game
- *   asks of rock: "is this point solid?" and "can A see B?".
+ *   a winding shaft down to a flat-floored chamber, and the fixtures in it (pod, reactor,
+ *   turrets, fuel cells, start point). Also answers the spatial questions the game asks of
+ *   rock: "is this cell / point solid?" and "can A see B?".
  *
  * Operations
- *   - Every random choice in generation comes from rng(seed) (random.ts).
- *   - generateLevel(n): fill with rock → carve the surface (two-sine heightline) → carve the
- *     chamber (ellipse, refilled below floorY and cleared above, so the floor is flat) → carve
- *     the shaft (waypoints alternating left/right, joined by strokes of discs whose radius
- *     wobbles but never drops below 2.7; optional side pockets) → find 3-wide floor/ceiling
- *     mount points → pick() turrets and fuel cells with minimum spacing from each other and from
- *     the start, entrance, pod and reactor. Difficulty scalars (gravity, turret count, shaft
- *     radius, reactor HP, depth) all scale with n.
- *   - isRock / isAir (integer cells) and solidAt (world points): the one rock-or-air rule every
- *     module shares. Above the grid = air (the exit); left / right / below the grid = rock.
- *   - lineOfSight(lv, a, b): samples the segment every 0.5 units with solidAt.
+ *   - difficulty(n): every difficulty knob (gravity, depth, switchbacks, tunnel radius and
+ *     wobble, pockets, branches, loops, caverns, turret count / rate / range / bullet speed /
+ *     aim, fuel cells, reactor HP) eased from planet 1 to MAX_DIFFICULTY_AT (50), then held.
+ *   - generateLevel(n): fill with rock → surface (two-sine heightline) → chamber (ellipse,
+ *     refilled below floorY and cleared above, so the floor is flat) → shaft (switchbacks
+ *     alternating left / right, joined by stroke()s of discs whose radius wobbles but never
+ *     drops below minRadius; side pockets) → caverns, loops (second routes via the far side)
+ *     and dead-end branches → 3-wide floor / ceiling mount points → pick() turrets and fuel
+ *     cells with minimum spacing. Random choices come from rng(seed) (random.ts).
+ *   - isRock / isAir (integer cells, on a Grid) and solidAt (world points): the one rock-or-air
+ *     rule every module shares. Above the grid = air (the exit); left / right / below = rock.
+ *   - lineOfSight(grid, a, b): samples the segment every 0.5 units with solidAt.
  *
  * Usage
- *   game.ts calls generateLevel(n) in Game.load() and queries solidAt / lineOfSight every step;
- *   view.ts reads grid, surface and fixture positions to build meshes; scripts/check.ts
- *   flood-fills the result.
+ *   game.ts: generateLevel(n) in Game.load(); solidAt / lineOfSight every step; lv.diff for
+ *   turret behaviour. view.ts / rock.ts / minimap.ts / fx.ts read the grid through isRock /
+ *   isAir / solidAt. scripts/check.ts flood-fills planets 1..50 and checks the curve.
  *
  * Highlights
- *   - Pure: no three.js or DOM, so it runs under Node.
- *   - Deterministic: the same n always yields the same planet (seed n * 7919 + 1337).
- *   - The returned Level also carries mutable per-playthrough state (turret alive/cooldown,
- *     fuel amount); resetting a level means calling generateLevel(n) again.
+ *   - Pure: no three.js or DOM, so it runs under Node. Deterministic: same n, same planet
+ *     (seed n * 7919 + 1337), name from names.ts.
+ *   - The returned Level also carries mutable per-playthrough state (turret alive / cooldown,
+ *     fuel amount); resetting a planet means calling generateLevel(n) again.
  *   - WALL = 3 columns each side are never carved, so the playfield is walled up into the sky.
  *
- * See also: game.ts, view.ts (build), scripts/check.ts; DESIGN.md "4. Coordinate system" and
- * "5. Level generation".
+ * See also: game.ts, names.ts, random.ts, view.ts, scripts/check.ts; DESIGN.md
+ * "4. Coordinate system and the grid", "5. Level generation and difficulty".
  */
 import { planetName } from "./names";
 import { rng } from "./random";

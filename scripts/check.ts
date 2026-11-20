@@ -1,5 +1,6 @@
 /**
- * check — headless asserts for the pure modules (level, game physics/rules, GPU tiers).
+ * check — headless asserts for the pure modules (level, difficulty, game rules, tiers, blocks,
+ * themes, names).
  *
  * Purpose
  *   The smallest set of checks that fail if the core logic breaks, runnable without a browser.
@@ -7,13 +8,21 @@
  * Operations
  *   1. Planets 1..50: a flood fill that only enters cells with a full 3x3 of air (ship-sized)
  *      reaches the pod and reactor from the start; turrets and fuel cells sit in air; at least
- *      three turrets; generation is deterministic.
+ *      two turrets; generation is deterministic.
  *   2. rod() holds its length to 1e-9 over 2000 steps while both bodies fall and one
  *      accelerates sideways.
  *   3. A tilted idle ship falls, crashes once, loses a life and respawns.
  *   4. Grabbing the pod from a hover closer than the rod length does not crash and lifts it;
  *      carrying it above exitY completes the planet, pays the bonus and loads planet 2.
- *   5. Real GPU renderer strings classify into the expected tiers.
+ *   5. Real GPU renderer strings (desktops, laptops, phones and tablets up to ~7 years old)
+ *      classify into the expected tiers.
+ *   6. Block types: all eight appear; topsoil only on the surface skin; ore / crystal only on
+ *      air-facing cells.
+ *   7. Difficulty never eases from one planet to the next, saturates at MAX_DIFFICULTY_AT, and
+ *      planet 1 is roomy.
+ *   8. Themes: all names distinct within a cycle, cycling wraps, evenGlow lands every neon on
+ *      NEON_LUMA.
+ *   9. Planet names: 50 unique hand-picked names, every name one capitalised word, stable.
  *
  * Usage
  *   npm run check  (node --import ./scripts/ts-resolve.mjs scripts/check.ts). Prints
@@ -21,11 +30,11 @@
  *
  * Highlights
  *   - Runs on Node's native TypeScript support; ts-resolve.mjs adds .ts to the extensionless
- *     src/ imports.
- *   - The browser-side counterpart is scripts/smoke.py (Playwright, desktop + touch).
+ *     src/ imports. rock.ts imports three.js, which loads fine under Node (no DOM touched).
+ *   - The browser-side counterpart is scripts/smoke.py (Playwright, desktop + touch, idle).
  *
- * See also: src/level.ts, src/game.ts, src/tier.ts, scripts/smoke.py; DESIGN.md
- * "13. Checks and tooling".
+ * See also: src/level.ts, src/game.ts, src/tier.ts, src/rock.ts, src/palette.ts, src/names.ts,
+ * scripts/smoke.py; DESIGN.md "13. Checks and tooling".
  */
 import assert from "node:assert/strict";
 import { difficulty, generateLevel, MAX_DIFFICULTY_AT, solidAt, type Difficulty } from "../src/level";
