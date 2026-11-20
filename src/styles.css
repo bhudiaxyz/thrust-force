@@ -226,15 +226,27 @@ body {
     animation-duration: 4s;
     box-shadow: 0 0 12px color-mix(in srgb, var(--amber) 30%, transparent);
 }
+/* The emblem ship mirrors the in-game one: dark hull, near-white neon outline with a bloom-like
+ * cyan halo (a tight bright drop-shadow plus a wide soft one), and a glowing canopy. The glow
+ * breathes in time with the bob. */
 .ls-ship {
     position: absolute;
     inset: 26px;
-    fill: none;
-    stroke: var(--cyan);
-    stroke-width: 2;
+    overflow: visible;
     stroke-linejoin: round;
-    filter: drop-shadow(0 0 6px var(--cyan));
-    animation: ls-bob 2.4s ease-in-out infinite;
+    filter: drop-shadow(0 0 2px #e6fbff) drop-shadow(0 0 6px var(--cyan)) drop-shadow(0 0 14px var(--cyan));
+    animation:
+        ls-bob 2.4s ease-in-out infinite,
+        ls-glow 2.4s ease-in-out infinite;
+}
+.ls-hull {
+    fill: color-mix(in srgb, var(--bg) 70%, #3a5068);
+    stroke: color-mix(in srgb, var(--cyan) 45%, #ffffff);
+    stroke-width: 1.8;
+}
+.ls-canopy {
+    fill: #f0fcff;
+    filter: drop-shadow(0 0 2px #ffffff) drop-shadow(0 0 5px var(--cyan));
 }
 .ls-pod {
     position: absolute;
@@ -384,6 +396,11 @@ body {
 @keyframes ls-bob {
     50% {
         transform: translateY(-4px);
+    }
+}
+@keyframes ls-glow {
+    50% {
+        filter: drop-shadow(0 0 3px #ffffff) drop-shadow(0 0 9px var(--cyan)) drop-shadow(0 0 20px var(--cyan));
     }
 }
 @keyframes ls-orbit-pod {
