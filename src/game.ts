@@ -402,7 +402,7 @@ export class Game {
     private moveBullets(h: number) {
         const lv = this.level,
             s = this.ship;
-        this.bullets = this.bullets.filter((b) => {
+        const keep = (b: Bullet): boolean => {
             b.x += b.vx * h;
             b.y += b.vy * h;
             if ((b.life -= h) <= 0) return false;
@@ -445,6 +445,10 @@ export class Game {
                 return false;
             }
             return true;
-        });
+        };
+        // In-place compaction (no new array 120 times a second).
+        let live = 0;
+        for (const b of this.bullets) if (keep(b)) this.bullets[live++] = b;
+        this.bullets.length = live;
     }
 }

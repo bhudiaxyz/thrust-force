@@ -2,40 +2,48 @@
  * View — three.js presentation of a Game: scene, meshes, particles, chase camera, post-FX.
  *
  * Purpose
- *   Draws the game side-on in 2.5D. Rock cells are instanced voxel boxes (depth 3) with HDR
- *   neon strips on every air-facing edge, a dark back wall fills the tunnels, stars sit behind
- *   the sky, a light rides with the ship, and bloom (plus shadows on the high tier) finishes the
- *   look. Each planet gets one of six palettes.
+ *   Draws the game side-on in 2.5D. Rock cells are instanced voxel boxes (depth 3) textured
+ *   with pixel-art block types and outlined with HDR neon strips on every air-facing edge; a
+ *   dark back wall fills the tunnels, stars sit behind the sky, a light rides with the ship, and
+ *   bloom, shadows, MSAA, bump relief and cave dust finish the look on tiers that can afford
+ *   them. Each planet takes its palette from palette.ts.
  *
  * Operations
- *   - constructor(parent, tierSettings): renderer (MSAA, DPR cap, ACES tone mapping, optional
- *     PCF-soft shadows), lights, the persistent ship / pod / rod / beam / bullet / particle
- *     objects, and the composer (RenderPass → UnrealBloomPass if the tier allows → OutputPass).
- *   - build(level) (private): when game.level changes identity, disposes the old level and
- *     builds rock instances, edge-strip instances, back wall, stars, pedestal, turrets, fuel
- *     cells and reactor.
- *   - sync(game, dt): poses everything from game state (ship, flame, shield, pod + rod, beam,
- *     turret barrels tracking the ship, fuel cell fill, reactor pulse / critical strobe),
- *     refills the bullet buffer, integrates and compacts particles, emits thrust exhaust, moves
- *     the chase camera and shadow-casting sun, then renders.
- *   - burst(x, y, n, speed, rgb, life): particle explosion; big bursts add camera shake.
+ *   - constructor(parent, tierSettings): renderer (no canvas MSAA: anti-aliasing happens on the
+ *     multisampled composer target instead), ACES tone mapping, optional soft PCF shadows,
+ *     lights, the persistent ship / pod / rod / beam / bullet / particle / debris / ring objects,
+ *     shared rock + edge materials, and the composer (RenderPass → UnrealBloomPass → OutputPass).
+ *   - build(level) (private): when game.level changes identity, disposes the old level, builds
+ *     the cheap parts at once (back wall, stars, pedestal, turrets, fuel cells, reactor) and
+ *     queues the rock as horizontal CHUNK-row slices.
+ *   - pump(budgetMs, focusY): builds queued rock chunks nearest the ship first until the time
+ *     budget is spent (always at least one). sync() calls it with the tier's buildMs, so a new
+ *     planet streams in over a few frames instead of freezing one; boot calls it with Infinity.
+ *   - warmup(): compiles every shader, including objects that start hidden (flame, shield,
+ *     rings, rod, beam, debris), so the first thrust or explosion doesn't hitch.
+ *   - sync(game, dt): pumps chunks, poses everything from game state, integrates particles and
+ *     debris, moves the chase camera, sun and dust, then renders.
+ *   - burst() / explode(): sparks; layered voxel explosions.
+ *   - degrade(): one step down in cost (DPR → shadows → bloom); returns false when nothing is
+ *     left. Called by main.ts's frame-time governor.
  *   - resize(): on window resize.
  *
  * Usage
- *   main.ts creates one View at boot with TIER_SETTINGS[tier], calls sync(game ?? attract, dt)
- *   every frame, and burst() from game events. scene, camera and renderer are public so boot
- *   can renderer.compileAsync(scene, camera) to warm shaders.
+ *   main.ts creates one View with TIER_SETTINGS[tier]; at boot: sync(attract, 0), pump(Infinity),
+ *   await warmup(); then sync(game ?? attract, dt) every active frame, explode()/burst() from
+ *   game events, degrade() when the governor asks.
  *
  * Highlights
  *   - Read-only with respect to Game; never writes game state.
  *   - What glows is decided by one rule: neon materials are toneMapped:false with HDR colours
  *     (>1), so they cross the bloom threshold (0.82) while lit surfaces mostly don't.
- *   - Particles are a fixed pool; dead ones are compacted to the front every frame so the
- *     draw range is exactly the live set. When full, random slots are overwritten.
+ *   - Rock chunks are separate InstancedMeshes, so three.js frustum-culls the ones off screen
+ *     (and outside the shadow camera): typically 2-3 of 8-12 are drawn.
+ *   - The per-frame path allocates nothing (scratch objects, element-wise buffer writes).
  *   - The camera sits 4 units below its look-at point so floors show their tops and tunnels
  *     read as 3D; portrait screens pull the camera back (z = 30 / aspect).
  *
- * See also: game.ts (state it draws), tier.ts (quality knobs), main.ts; DESIGN.md
+ * See also: game.ts (state it draws), rock.ts, palette.ts, tier.ts, main.ts; DESIGN.md
  * "7. Rendering".
  */
 import * as THREE from 'three';
@@ -50,6 +58,9 @@ import { BLOCK, blockAt, rockMaterial, TINTLESS, wallMaterial } from './rock';
 import { COLORS, evenGlow, ramp, themeFor, type RGB } from './palette';
 
 const C = COLORS;
+const WHITE = new THREE.Color(1, 1, 1);
+/** Cave dust volume (world units) wrapped around the camera. */
+const DUST_BOX: [number, number] = [60, 44];
 
 function dotTexture() {
     const c = document.createElement('canvas');
@@ -84,6 +95,9 @@ function pointsLayer(max: number, size: number, tex: THREE.Texture) {
 }
 
 const MAX_DEBRIS = 400;
+/** Rows per rock chunk: one InstancedMesh each, so off-screen chunks are culled. */
+const CHUNK = 24;
+const MARGIN = 12; // solid cells drawn beyond the grid's sides and bottom
 
 const neonMat = ([r, g, b]: RGB) => new THREE.MeshBasicMaterial({ color: new THREE.Color(r, g, b), toneMapped: false });
 
@@ -130,12 +144,23 @@ export class View {
     private rings: { mesh: THREE.Mesh; life: number; max: number; size: number }[] = [];
     private flash = new THREE.PointLight(C.light.flash, 0, 40, 1.4);
     private neon: RGB = themeFor(1).neon;
+    // Rock streaming (see build / pump) and the materials every planet shares.
+    private jobs: number[] = []; // chunk start rows still to build
+    private chunkCtx: { lv: Level; deep: THREE.Color; top: THREE.Color; surf: THREE.Color } | null = null;
+    private rockMat: THREE.MeshStandardMaterial;
+    private stripMat = new THREE.MeshBasicMaterial({ toneMapped: false });
+    private boxGeo = new THREE.BoxGeometry(1, 1, 3);
+    private unitBox = new THREE.BoxGeometry(1, 1, 1);
+    // Cave dust (high tiers): motes in a box that wraps around the camera.
+    private dust: THREE.Points | null = null;
 
     constructor(
         parent: HTMLElement,
         private ts: TierSettings,
     ) {
-        this.renderer = new THREE.WebGLRenderer({ antialias: ts.antialias, powerPreference: 'high-performance' });
+        // No canvas MSAA: the image goes through the composer, whose render target is
+        // multisampled instead (canvas MSAA would be wasted memory and fill).
+        this.renderer = new THREE.WebGLRenderer({ antialias: false, stencil: false, powerPreference: 'high-performance' });
         this.renderer.setPixelRatio(Math.min(devicePixelRatio, ts.dprCap));
         this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
         parent.appendChild(this.renderer.domElement);
@@ -147,11 +172,12 @@ export class View {
         // Sun from upper-left-front. On the high tier it casts a soft shadow map that follows the
         // ship, so rock, ship and pod throw shadows onto the back wall and tunnel sides.
         this.scene.add(new THREE.HemisphereLight(C.light.hemiSky, C.light.hemiGround, 0.9));
-        if (ts.shadows) {
+        if (ts.shadowMap > 0) {
             this.renderer.shadowMap.enabled = true;
-            this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            this.renderer.shadowMap.type = THREE.PCFShadowMap; // PCFSoft is deprecated in r185
+            this.sun.shadow.radius = 3; // PCF blur, for soft edges
             this.sun.castShadow = true;
-            this.sun.shadow.mapSize.set(2048, 2048);
+            this.sun.shadow.mapSize.set(ts.shadowMap, ts.shadowMap);
             const c = this.sun.shadow.camera;
             c.left = c.bottom = -32;
             c.right = c.top = 32;
@@ -261,9 +287,32 @@ export class View {
         }
         this.scene.add(this.debris, this.flash);
 
-        this.composer = new EffectComposer(this.renderer);
+        this.rockMat = rockMaterial(ts.bump);
+        this.rockMat.userData.shared = this.stripMat.userData.shared = true;
+
+        if (ts.dust > 0) {
+            const n = ts.dust;
+            this.dust = pointsLayer(n, 0.12, tex);
+            const dp = this.dust.geometry.attributes.position.array as Float32Array;
+            const dc = this.dust.geometry.attributes.color.array as Float32Array;
+            for (let k = 0; k < n; k++) {
+                dp[k * 3] = Math.random() * DUST_BOX[0];
+                dp[k * 3 + 1] = Math.random() * DUST_BOX[1];
+                dp[k * 3 + 2] = -1.2 + Math.random() * 2.4;
+                const v = 0.25 + Math.random() * 0.5;
+                dc[k * 3] = v * C.fx.dust[0];
+                dc[k * 3 + 1] = v * C.fx.dust[1];
+                dc[k * 3 + 2] = v * C.fx.dust[2];
+            }
+            this.dust.geometry.setDrawRange(0, n);
+            this.scene.add(this.dust);
+        }
+
+        // HalfFloat keeps HDR neon above 1 for bloom; samples = MSAA on WebGL2.
+        const target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: ts.msaa });
+        this.composer = new EffectComposer(this.renderer, target);
         this.composer.addPass(new RenderPass(this.scene, this.camera));
-        this.bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.85, 0.5, 0.82);
+        this.bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.75, 0.38, 0.82);
         if (ts.bloom) this.composer.addPass(this.bloom);
         this.composer.addPass(new OutputPass());
         this.resize();
@@ -274,6 +323,7 @@ export class View {
         const w = innerWidth,
             h = innerHeight;
         this.renderer.setSize(w, h);
+        this.composer.setPixelRatio(this.renderer.getPixelRatio());
         this.composer.setSize(w, h);
         this.camera.aspect = w / h;
         this.camera.updateProjectionMatrix();
@@ -282,8 +332,9 @@ export class View {
     private build(lv: Level) {
         this.levelGroup.traverse((o) => {
             if (o instanceof THREE.Mesh || o instanceof THREE.Points || o instanceof THREE.InstancedMesh) {
-                o.geometry.dispose();
-                (o.material as THREE.Material).dispose();
+                if (o.geometry !== this.boxGeo && o.geometry !== this.unitBox) o.geometry.dispose();
+                const m = o.material as THREE.Material;
+                if (!m.userData.shared) m.dispose();
             }
         });
         this.levelGroup.clear();
@@ -293,63 +344,13 @@ export class View {
         const solid = (x: number, y: number) => x < 0 || x >= w || y < 0 || (y < h && grid[y * w + x] === 1);
         const air = (x: number, y: number) => x >= 0 && x < w && y >= 0 && !solid(x, y);
 
-        // Rock voxels: one instance per solid cell; aTile picks its block type (rock.ts). A MARGIN
-        // of solid cells beyond the grid's sides and bottom fills what the camera would otherwise
-        // show as empty void near the walls and floor.
-        const MARGIN = 12;
-        let count = 0;
-        for (let y = -MARGIN; y < h; y++) for (let x = -MARGIN; x < w + MARGIN; x++) if (solid(x, y)) count++;
-        const tiles = new Float32Array(count);
-        const rockGeo = new THREE.BoxGeometry(1, 1, 3);
-        rockGeo.setAttribute('aTile', new THREE.InstancedBufferAttribute(tiles, 1));
-        const rock = new THREE.InstancedMesh(rockGeo, rockMaterial(), count);
-        const m = new THREE.Matrix4();
-        const col = new THREE.Color();
-        const white = new THREE.Color(1, 1, 1);
-        const deep = new THREE.Color(pal.deep),
-            top = new THREE.Color(pal.top),
-            surf = new THREE.Color(pal.surf);
-        let i = 0;
-        const bars: { x: number; y: number; horiz: boolean }[] = [];
-        for (let y = -MARGIN; y < h; y++)
-            for (let x = -MARGIN; x < w + MARGIN; x++) {
-                if (!solid(x, y)) continue;
-                const inside = x >= 0 && x < w && y >= 0;
-                const sx = Math.min(Math.max(x, 0), w - 1);
-                const hash = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
-                const jitter = (hash - Math.floor(hash)) * 0.18 - 0.09;
-                m.makeTranslation(x + 0.5, y + 0.5, 0);
-                rock.setMatrixAt(i, m);
-                const tile = inside ? blockAt(lv, x, y) : BLOCK.Stone;
-                tiles[i] = tile;
-                col.copy(deep).lerp(top, Math.max(0, y) / h);
-                if (inside && y >= lv.surface[sx] - 4) col.lerp(surf, y >= lv.surface[sx] - 1 ? 1 : 0.45);
-                if (!inside) col.multiplyScalar(0.7);
-                // The tile textures average ~75% brightness, so lift the tint to keep the palette.
-                col.multiplyScalar(1.45);
-                if (TINTLESS.has(tile)) col.lerp(white, C.rock.tintlessLift);
-                col.offsetHSL(0, 0, jitter);
-                rock.setColorAt(i++, col);
-                if (air(x, y + 1)) bars.push({ x: x + 0.5, y: y + 1, horiz: true });
-                if (air(x, y - 1)) bars.push({ x: x + 0.5, y, horiz: true });
-                if (air(x + 1, y)) bars.push({ x: x + 1, y: y + 0.5, horiz: false });
-                if (air(x - 1, y)) bars.push({ x, y: y + 0.5, horiz: false });
-            }
-        rock.castShadow = rock.receiveShadow = true;
-        this.levelGroup.add(rock);
-
-        // Neon edge strips on the front face.
+        // Rock: queued as CHUNK-row slices (including the MARGIN rows below the grid), built by
+        // pump() nearest the ship first. Edge-strip colour is per planet, the material shared.
         this.neon = evenGlow(pal.neon);
-        const strips = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), neonMat(this.neon), bars.length);
-        const s = new THREE.Vector3(),
-            q = new THREE.Quaternion(),
-            p = new THREE.Vector3();
-        bars.forEach((b, k) => {
-            s.set(b.horiz ? 1.04 : 0.1, b.horiz ? 0.1 : 1.04, 0.1);
-            p.set(b.x, b.y, 1.52);
-            strips.setMatrixAt(k, m.compose(p, q, s));
-        });
-        this.levelGroup.add(strips);
+        this.stripMat.color.setRGB(...this.neon);
+        this.chunkCtx = { lv, deep: new THREE.Color(pal.deep), top: new THREE.Color(pal.top), surf: new THREE.Color(pal.surf) };
+        this.jobs = [];
+        for (let y0 = -MARGIN; y0 < h; y0 += CHUNK) this.jobs.push(y0);
 
         // Back wall behind the tunnels, shaped to the surface so the sky stays open.
         const back = new THREE.Shape();
@@ -453,17 +454,133 @@ export class View {
         this.dn = 0;
     }
 
+    /** Build queued rock chunks, nearest to focusY first, until budgetMs is spent (min one). */
+    pump(budgetMs: number, focusY: number) {
+        const t0 = performance.now();
+        while (this.jobs.length) {
+            let best = 0;
+            for (let k = 1; k < this.jobs.length; k++)
+                if (Math.abs(this.jobs[k] + CHUNK / 2 - focusY) < Math.abs(this.jobs[best] + CHUNK / 2 - focusY)) best = k;
+            const [y0] = this.jobs.splice(best, 1);
+            this.buildChunk(y0, Math.min(y0 + CHUNK, this.chunkCtx!.lv.h));
+            if (performance.now() - t0 >= budgetMs) break;
+        }
+    }
+
+    /** One horizontal slice of rock: voxel instances + neon edge strips, as two InstancedMeshes. */
+    private buildChunk(y0: number, y1: number) {
+        const { lv, deep, top, surf } = this.chunkCtx!;
+        const { w, h, grid } = lv;
+        const solid = (x: number, y: number) => x < 0 || x >= w || y < 0 || (y < h && grid[y * w + x] === 1);
+        const air = (x: number, y: number) => x >= 0 && x < w && y >= 0 && !solid(x, y);
+        let count = 0;
+        for (let y = y0; y < y1; y++) for (let x = -MARGIN; x < w + MARGIN; x++) if (solid(x, y)) count++;
+        if (!count) return;
+        const tiles = new Float32Array(count);
+        const geo = this.boxGeo.clone(); // shares nothing mutable; holds this chunk's aTile attribute
+        geo.setAttribute('aTile', new THREE.InstancedBufferAttribute(tiles, 1));
+        const rock = new THREE.InstancedMesh(geo, this.rockMat, count);
+        const m = this.tmpM,
+            col = this.tmpC;
+        const bars: number[] = []; // x, y, horiz(1/0) triples
+        let i = 0;
+        for (let y = y0; y < y1; y++)
+            for (let x = -MARGIN; x < w + MARGIN; x++) {
+                if (!solid(x, y)) continue;
+                const inside = x >= 0 && x < w && y >= 0;
+                const sx = Math.min(Math.max(x, 0), w - 1);
+                const hash = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+                const jitter = (hash - Math.floor(hash)) * 0.18 - 0.09;
+                m.makeTranslation(x + 0.5, y + 0.5, 0);
+                rock.setMatrixAt(i, m);
+                const tile = inside ? blockAt(lv, x, y) : BLOCK.Stone;
+                tiles[i] = tile;
+                col.copy(deep).lerp(top, Math.max(0, y) / h);
+                if (inside && y >= lv.surface[sx] - 4) col.lerp(surf, y >= lv.surface[sx] - 1 ? 1 : 0.45);
+                if (!inside) col.multiplyScalar(0.7);
+                // The tile textures average ~75% brightness, so lift the tint to keep the palette.
+                col.multiplyScalar(1.45);
+                if (TINTLESS.has(tile)) col.lerp(WHITE, C.rock.tintlessLift);
+                col.offsetHSL(0, 0, jitter);
+                rock.setColorAt(i++, col);
+                if (air(x, y + 1)) bars.push(x + 0.5, y + 1, 1);
+                if (air(x, y - 1)) bars.push(x + 0.5, y, 1);
+                if (air(x + 1, y)) bars.push(x + 1, y + 0.5, 0);
+                if (air(x - 1, y)) bars.push(x, y + 0.5, 0);
+            }
+        rock.castShadow = rock.receiveShadow = true;
+        this.levelGroup.add(rock);
+        if (!bars.length) return;
+        const strips = new THREE.InstancedMesh(this.unitBox, this.stripMat, bars.length / 3);
+        const sc = this.tmpS,
+            q = this.tmpQ.identity(),
+            p = this.tmpP;
+        for (let k = 0; k < bars.length; k += 3) {
+            const horiz = bars[k + 2] === 1;
+            sc.set(horiz ? 1.04 : 0.1, horiz ? 0.1 : 1.04, 0.1);
+            p.set(bars[k], bars[k + 1], 1.52);
+            strips.setMatrixAt(k / 3, m.compose(p, q, sc));
+        }
+        this.levelGroup.add(strips);
+    }
+
+    /**
+     * Compile every shader up front, including objects that start hidden, so the first thrust,
+     * shield, tow or explosion doesn't stall on a shader compile mid-game.
+     */
+    async warmup() {
+        const hidden = [this.flame, this.shield, this.rodLine, this.beamLine, ...this.rings.map((r) => r.mesh)];
+        const was = hidden.map((o) => o.visible);
+        hidden.forEach((o) => (o.visible = true));
+        this.debris.count = 1;
+        await this.renderer.compileAsync(this.scene, this.camera);
+        this.composer.render(0); // also builds the post-processing programs and targets
+        hidden.forEach((o, k) => (o.visible = was[k]));
+        this.debris.count = this.dn;
+    }
+
+    /**
+     * One step down in GPU cost, for the frame-time governor. Order: pixel ratio (down to 1),
+     * then shadows, then bloom. Returns false when there is nothing left to drop.
+     */
+    degrade(): boolean {
+        const dpr = this.renderer.getPixelRatio();
+        if (dpr > 1) {
+            this.renderer.setPixelRatio(Math.max(1, dpr - 0.25));
+            this.resize();
+            return true;
+        }
+        if (this.renderer.shadowMap.enabled) {
+            this.renderer.shadowMap.enabled = false;
+            this.sun.castShadow = false;
+            this.scene.traverse((o) => {
+                const m = (o as THREE.Mesh).material as THREE.Material | undefined;
+                if (m) m.needsUpdate = true;
+            });
+            return true;
+        }
+        if (this.composer.passes.includes(this.bloom)) {
+            this.composer.removePass(this.bloom);
+            return true;
+        }
+        return false;
+    }
+
     burst(x: number, y: number, n: number, speed: number, rgb: RGB, life = 1) {
         for (let k = 0; k < n; k++) {
             const i = this.pn < this.maxP ? this.pn++ : Math.floor(Math.random() * this.maxP);
             const a = Math.random() * Math.PI * 2,
                 v = speed * (0.2 + Math.random());
             const pos = this.sparks.geometry.attributes.position.array as Float32Array;
-            pos.set([x, y, (Math.random() - 0.5) * 1.5], i * 3);
+            pos[i * 3] = x;
+            pos[i * 3 + 1] = y;
+            pos[i * 3 + 2] = (Math.random() - 0.5) * 1.5;
             this.pv[i * 2] = Math.cos(a) * v;
             this.pv[i * 2 + 1] = Math.sin(a) * v;
             this.plife[i] = life * (0.5 + Math.random() * 0.5);
-            this.pcol.set(rgb, i * 3);
+            this.pcol[i * 3] = rgb[0];
+            this.pcol[i * 3 + 1] = rgb[1];
+            this.pcol[i * 3 + 2] = rgb[2];
         }
         if (n > 30) this.shake = Math.max(this.shake, n / 80);
     }
@@ -593,8 +710,9 @@ export class View {
     sync(g: Game, dt: number) {
         const lv = g.level;
         if (lv !== this.builtFor) this.build(lv);
-        this.time += dt;
         const s = g.ship;
+        if (this.jobs.length) this.pump(this.ts.buildMs, s.y);
+        this.time += dt;
         const alive = g.phase === 'play' || g.phase === 'complete';
 
         this.ship.visible = alive;
@@ -664,8 +782,13 @@ export class View {
         const nb = Math.min(g.bullets.length, 400);
         for (let k = 0; k < nb; k++) {
             const b = g.bullets[k];
-            bp.set([b.x, b.y, 0.4], k * 3);
-            bc.set(b.enemy ? C.bullet.enemy : C.bullet.player, k * 3);
+            const c = b.enemy ? C.bullet.enemy : C.bullet.player;
+            bp[k * 3] = b.x;
+            bp[k * 3 + 1] = b.y;
+            bp[k * 3 + 2] = 0.4;
+            bc[k * 3] = c[0];
+            bc[k * 3 + 1] = c[1];
+            bc[k * 3 + 2] = c[2];
         }
         this.bullets.geometry.attributes.position.needsUpdate = true;
         this.bullets.geometry.attributes.color.needsUpdate = true;
@@ -705,13 +828,35 @@ export class View {
             ty = s.y + s.vy * 0.3;
         const c = this.camera.position;
         const k = 1 - Math.exp(-dt * 4);
-        if (this.time < 0.1 || c.distanceTo(new THREE.Vector3(tx, ty, z)) > 60) c.set(tx, ty, z);
+        if (this.time < 0.1 || Math.hypot(c.x - tx, c.y - ty) > 60) c.set(tx, ty, z);
         c.x += (tx - c.x) * k;
         c.y += (ty - 4 - c.y) * k;
         c.z = z;
         this.shake *= Math.exp(-dt * 3);
         const sh = this.shake;
         this.camera.lookAt(c.x + (Math.random() - 0.5) * sh, c.y + 4 + (Math.random() - 0.5) * sh, 0);
+
+        // Dust: drift, wrap inside a box centred on the camera; only shown inside the planet.
+        if (this.dust) {
+            const inside = s.y < lv.h - 40;
+            this.dust.visible = inside;
+            if (inside) {
+                const dp = this.dust.geometry.attributes.position.array as Float32Array;
+                const [bw, bh] = DUST_BOX;
+                const ox = c.x - bw / 2,
+                    oy = c.y + 4 - bh / 2;
+                for (let k = 0; k < dp.length; k += 3) {
+                    const ph = k * 0.37 + this.time * 0.3;
+                    let x = dp[k] + Math.sin(ph) * 0.15 * dt,
+                        y = dp[k + 1] + (0.12 + Math.cos(ph * 0.7) * 0.1) * dt;
+                    x = ((((x - ox) % bw) + bw) % bw) + ox;
+                    y = ((((y - oy) % bh) + bh) % bh) + oy;
+                    dp[k] = x;
+                    dp[k + 1] = y;
+                }
+                this.dust.geometry.attributes.position.needsUpdate = true;
+            }
+        }
 
         this.composer.render(dt);
     }
@@ -720,7 +865,10 @@ export class View {
         l.visible = on;
         if (!on) return;
         const arr = l.geometry.attributes.position.array as Float32Array;
-        arr.set([a.x, a.y, 0, b.x, b.y, 0]);
+        arr[0] = a.x;
+        arr[1] = a.y;
+        arr[3] = b.x;
+        arr[4] = b.y;
         l.geometry.attributes.position.needsUpdate = true;
     }
 }

@@ -18,7 +18,8 @@
  *                                                   from low-frequency value noise
  *     Region noise is seeded by the level number, so each planet's strata differ but stay
  *     deterministic.
- *   - rockMaterial(): MeshStandardMaterial with the albedo atlas as map and a matching emissive
+ *   - rockMaterial(bump): MeshStandardMaterial with the albedo atlas as map (and, when bump, as
+ *     a bump map for pixel relief) and a matching emissive
  *     atlas (only ore flecks and crystal facets are lit, so they glow and bloom). onBeforeCompile
  *     reads the per-instance `aTile` attribute and derives tile-local UVs from object-space
  *     position on each face, so the 1x1x3 box repeats the tile 3 times along its depth instead
@@ -243,16 +244,24 @@ function getAtlas() {
     return atlas;
 }
 
-export function rockMaterial() {
+/**
+ * The rock material. bump = pixel relief: the albedo atlas doubles as a bump map, so dark
+ * cracks, mortar and joints read as recessed under the ship's light (high tiers only).
+ * Create once per View and reuse across planets: the shader then compiles once.
+ */
+export function rockMaterial(bump: boolean) {
     const { map, glow } = getAtlas();
     const mat = new THREE.MeshStandardMaterial({
         map,
         emissiveMap: glow,
-        emissive: 0xffffff,
+        emissive: 0xffffff, // multiplier for the emissive atlas, not a colour
         emissiveIntensity: 1.8,
         roughness: 0.85,
         metalness: 0.05,
+        ...(bump ? { bumpMap: map, bumpScale: 2.5 } : {}),
     });
+    // Tells three.js the patched shader differs per bump setting (programs are cached by key).
+    mat.customProgramCacheKey = () => `rock-${bump}`;
     mat.onBeforeCompile = (sh) => {
         sh.vertexShader = sh.vertexShader
             .replace('#include <common>', '#include <common>\nattribute float aTile;\nvarying float vTile;\nvarying vec2 vLocal;')
@@ -272,7 +281,26 @@ export function rockMaterial() {
                 vec2 tileUv() { return vec2((fract(vLocal.x) + vTile) / ${TILES}.0, fract(vLocal.y)); }`,
             )
             .replace('#include <map_fragment>', 'diffuseColor *= texture2D(map, tileUv());')
-            .replace('#include <emissivemap_fragment>', 'totalEmissiveRadiance *= texture2D(emissiveMap, tileUv()).rgb;');
+            .replace('#include <emissivemap_fragment>', 'totalEmissiveRadiance *= texture2D(emissiveMap, tileUv()).rgb;')
+            // Bump: sample the atlas through tileUv(), but take screen-space derivatives from the
+            // continuous vLocal (scaled to atlas units) so fract() wrap-arounds aren't seen as
+            // cliffs in the height field.
+            .replace(
+                '#include <bumpmap_pars_fragment>',
+                `#ifdef USE_BUMPMAP
+                uniform sampler2D bumpMap;
+                uniform float bumpScale;
+                vec2 dHdxy_fwd() {
+                    vec2 dSTdx = dFdx(vLocal) / vec2(${TILES}.0, 1.0);
+                    vec2 dSTdy = dFdy(vLocal) / vec2(${TILES}.0, 1.0);
+                    vec2 uv = tileUv();
+                    float Hll = bumpScale * texture2D(bumpMap, uv).x;
+                    float dBx = bumpScale * texture2D(bumpMap, uv + dSTdx).x - Hll;
+                    float dBy = bumpScale * texture2D(bumpMap, uv + dSTdy).x - Hll;
+                    return vec2(dBx, dBy);
+                }
+                ${THREE.ShaderChunk.bumpmap_pars_fragment.slice(THREE.ShaderChunk.bumpmap_pars_fragment.indexOf('vec3 perturbNormalArb'))}`,
+            );
     };
     return mat;
 }

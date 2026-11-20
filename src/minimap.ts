@@ -15,9 +15,10 @@
  *   - toggle(): collapses to / expands from the map icon button.
  *
  * Usage
- *   main.ts: const map = new Minimap($('minimap'), isTouch); map.draw(game) each active frame;
- *   N key or a click on the map toggles it. On touch devices it starts collapsed (iconified)
- *   so it doesn't crowd the buttons; tap the icon to open it.
+ *   main.ts: const map = new Minimap($('minimap')); map.draw(game) each active frame;
+ *   N key or a click on the map toggles it. It starts collapsed (iconified) only when the
+ *   screen is too small to spare the room (phones), open otherwise (tablets, desktops);
+ *   re-checked on resize / rotation until the player toggles it.
  *
  * Highlights
  *   - 2D canvas only, no three.js: a few hundred fillRects per frame, negligible cost.
@@ -43,13 +44,14 @@ export class Minimap {
     private scale = 1; // CSS px per cell
     private dpr = Math.min(devicePixelRatio || 1, 2);
 
-    constructor(
-        private root: HTMLElement,
-        collapsed: boolean,
-    ) {
+    /** True once the player has toggled the map; from then on their choice sticks. */
+    private chosen = false;
+
+    constructor(private root: HTMLElement) {
         this.canvas = root.querySelector('canvas')!;
         this.ctx = this.canvas.getContext('2d')!;
-        root.classList.toggle('collapsed', collapsed);
+        this.fit();
+        addEventListener('resize', () => this.fit());
         root.addEventListener('click', () => this.toggle());
         // Don't take focus on press, or Space (fire) would then "click" the button.
         root.addEventListener('pointerdown', (e) => e.preventDefault());
@@ -57,7 +59,20 @@ export class Minimap {
 
     private last: Game | null = null;
 
+    /**
+     * Collapse to the icon only when the screen can't spare the room: the open map needs about
+     * MAX_W x MAX_H plus margins, and must leave most of a phone screen for play. Phones in
+     * portrait or landscape collapse; tablets and desktops stay open. Re-checked on resize and
+     * rotation until the player picks for themselves.
+     */
+    private fit() {
+        if (this.chosen) return;
+        const roomy = innerWidth >= MAX_W * 4 && innerHeight >= MAX_H * 2.4;
+        this.root.classList.toggle('collapsed', !roomy);
+    }
+
     toggle() {
+        this.chosen = true;
         this.root.classList.toggle('collapsed');
         if (this.last) this.draw(this.last); // so it isn't blank when opened while paused
     }

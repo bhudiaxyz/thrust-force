@@ -134,6 +134,7 @@ export const COLORS = {
         ringHot: [3.0, 1.5, 0.4] as RGB,
         debrisHull: [0.55, 0.62, 0.72] as RGB,
         star: [1.0, 1.0, 1.1] as RGB, // multiplied by a random 0.4..1.8 brightness
+        dust: [0.8, 0.85, 1.0] as RGB, // cave dust motes, times a random 0.25..0.75
     },
     /** Cooling ember debris, sampled with ramp(): t = remaining life, 1 → 0. */
     ember: [
@@ -182,7 +183,7 @@ export const COLORS = {
 };
 
 /** Perceived brightness every theme's neon is scaled to, so yellows don't out-bloom blues. */
-export const NEON_LUMA = 1.6;
+export const NEON_LUMA = 1.4;
 
 /** Scale an HDR colour so its luma (Rec. 709 weights) is NEON_LUMA, keeping its hue. */
 export function evenGlow(c: RGB): RGB {

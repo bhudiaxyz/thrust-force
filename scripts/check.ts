@@ -130,15 +130,28 @@ for (let n = 1; n <= 50; n++) {
 {
     const t = (renderer: string, mobile = false, cores = 8, memGB?: number) =>
         classifyGpu({ renderer, mobile, cores, memGB });
+    // Desktop / laptop.
     assert.equal(t('ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 Direct3D11)'), 'high');
+    assert.equal(t('ANGLE (NVIDIA, NVIDIA GeForce GTX 1650 Direct3D11)'), 'high');
+    assert.equal(t('ANGLE (NVIDIA, NVIDIA GeForce GTX 1050 Ti Direct3D11)'), 'mid'); // 2016 entry discrete
+    assert.equal(t('ANGLE (NVIDIA, NVIDIA GeForce MX250 Direct3D11)'), 'mid'); // 2019 laptop
+    assert.equal(t('Apple M1'), 'high');
     assert.equal(t('ANGLE (Intel, Intel(R) Iris(R) Xe Graphics Direct3D11)'), 'mid');
-    assert.equal(t('ANGLE (Intel, Intel(R) UHD Graphics 620 Direct3D11)'), 'low');
+    assert.equal(t('ANGLE (AMD, AMD Radeon(TM) Vega 8 Graphics Direct3D11)'), 'mid'); // 2018-19 Ryzen laptop
+    assert.equal(t('ANGLE (Intel, Intel(R) UHD Graphics 620 Direct3D11)'), 'low'); // 2017-19 laptop
     assert.equal(t('ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device))'), 'low');
-    assert.equal(t('Apple GPU', true, 4), 'high');
-    assert.equal(t('Adreno (TM) 740', true), 'high');
-    assert.equal(t('Adreno (TM) 618', true), 'low');
+    assert.equal(t('ANGLE (NVIDIA GeForce RTX 3060)', false, 8, 2), 'low'); // 2 GB RAM
+    // Phones and tablets.
+    assert.equal(t('Apple GPU', true, 4), 'mobile-high'); // any iPad / iPhone (Safari masks the model)
+    assert.equal(t('Adreno (TM) 730', true), 'mobile-high'); // Galaxy S22 (Snapdragon)
+    assert.equal(t('Samsung Xclipse 920', true), 'mobile-high'); // Galaxy S22 (Exynos)
+    assert.equal(t('Adreno (TM) 740', true), 'mobile-high');
+    assert.equal(t('Mali-G710', true), 'mobile-high'); // Pixel 7 / Dimensity 9000
+    assert.equal(t('Adreno (TM) 640', true), 'mid'); // Galaxy S10 (2019)
+    assert.equal(t('Mali-G76', true), 'mid'); // Galaxy S10 Exynos (2019)
     assert.equal(t('Mali-G78', true), 'mid');
-    assert.equal(t('ANGLE (NVIDIA GeForce RTX 3060)', false, 8, 2), 'low');
+    assert.equal(t('Adreno (TM) 618', true), 'low'); // budget 2019-20
+    assert.equal(t('Mali-G52', true), 'low');
 }
 
 {

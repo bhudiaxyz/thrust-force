@@ -99,7 +99,7 @@ document.querySelector('.ls-controls')!.textContent = help
 document.querySelector('.ls-enter')!.textContent = isTouch ? 'Tap to launch' : 'Click or press Enter to launch';
 
 let view: View;
-const minimap = new Minimap($('minimap'), isTouch);
+const minimap = new Minimap($('minimap'));
 let attract: Game;
 let game: Game | null = null;
 let paused = false;
@@ -257,16 +257,24 @@ const hudScore = $('h-score'),
     hudCount = $('h-count'),
     hudMsg = $('h-msg');
 
+// The HUD only touches the DOM when a value actually changes: writing identical text or styles
+// every frame still costs style recalculation, which shows up as jank on phones.
+const hudCache = new Map<string, string>();
+function put(key: string, v: string, write: (v: string) => void) {
+    if (hudCache.get(key) === v) return;
+    hudCache.set(key, v);
+    write(v);
+}
 function drawHud(g: Game) {
-    hudScore.textContent = g.score.toLocaleString();
-    hudLives.textContent = '▲'.repeat(Math.max(0, g.lives));
-    hudLevel.textContent = `Planet ${g.levelNo}: ${g.level.name}`;
-    hudFuel.style.width = `${(g.fuel / CFG.fuelMax) * 100}%`;
-    hudFuel.classList.toggle('low', g.fuel < 20);
-    hudReactor.style.width = `${(g.reactorHp / g.level.reactorHp) * 100}%`;
-    hudCount.textContent = g.critical >= 0 ? g.critical.toFixed(1) : '';
-    hudMsg.textContent = g.messageTime > 0 ? g.message : '';
-    hudMsg.style.opacity = String(Math.min(1, Math.max(0, g.messageTime * 2)));
+    put('score', g.score.toLocaleString(), (v) => (hudScore.textContent = v));
+    put('lives', '▲'.repeat(Math.max(0, g.lives)), (v) => (hudLives.textContent = v));
+    put('level', `Planet ${g.levelNo}: ${g.level.name}`, (v) => (hudLevel.textContent = v));
+    put('fuel', `${Math.round((g.fuel / CFG.fuelMax) * 200) / 2}%`, (v) => (hudFuel.style.width = v));
+    put('low', String(g.fuel < 20), (v) => hudFuel.classList.toggle('low', v === 'true'));
+    put('reactor', `${Math.round((g.reactorHp / g.level.reactorHp) * 100)}%`, (v) => (hudReactor.style.width = v));
+    put('count', g.critical >= 0 ? g.critical.toFixed(1) : '', (v) => (hudCount.textContent = v));
+    put('msg', g.messageTime > 0 ? g.message : '', (v) => (hudMsg.textContent = v));
+    put('msgA', (Math.min(1, Math.max(0, g.messageTime * 2))).toFixed(2), (v) => (hudMsg.style.opacity = v));
 }
 
 // Idle handling: when nothing is simulating (splash, paused, game over) the loop keeps drawing
@@ -298,42 +306,99 @@ function frame(now: number) {
     if (game && !paused) {
         game.update(dt, steer(game));
         drawHud(game);
-        minimap.draw(game);
+        if (now - lastMap > 66) {
+            lastMap = now; // the minimap is coarse: 15 Hz is plenty
+            minimap.draw(game);
+        }
+        govern(now, active);
     }
     setEngine(!!game && !paused && game.thrusting && game.phase === 'play');
     view.sync(game ?? attract, paused ? 0 : dt);
 }
+let lastMap = 0;
 
-// Boot: each step updates the splash bar, then yields a frame so it paints.
+// Frame-time governor: the tier is a guess, this is the correction. While playing, keep an
+// exponential average of the real frame interval; if it stays above SLOW_MS for SLOW_FOR
+// seconds, ask the view to drop one level of cost (DPR → shadows → bloom), then give the
+// change GRACE seconds to settle. Never steps back up, so quality can't oscillate.
+const SLOW_MS = 26,
+    SLOW_FOR = 2,
+    GRACE = 3;
+let avgMs = 16,
+    slowFor = 0,
+    graceUntil = 0,
+    lastGov = 0,
+    govLevel: unknown = null;
+function govern(now: number, active: boolean) {
+    const ms = now - lastGov;
+    lastGov = now;
+    if (!active || ms > 250 || document.hidden) return; // resumed after a pause / tab switch
+    if (game!.level !== govLevel) {
+        govLevel = game!.level; // new planet: rock is streaming in, don't judge yet
+        graceUntil = now + GRACE * 1000;
+    }
+    avgMs += (ms - avgMs) * 0.05;
+    if (now < graceUntil) return;
+    slowFor = avgMs > SLOW_MS ? slowFor + ms / 1000 : 0;
+    if (slowFor < SLOW_FOR) return;
+    slowFor = 0;
+    graceUntil = now + GRACE * 1000;
+    if (view.degrade()) console.info(`[thrust-force] slow frames (${avgMs.toFixed(1)} ms): quality stepped down`);
+}
+
+// Boot: each step updates the splash bar, then yields a frame so it paints and the browser
+// stays responsive (fonts, input, splash animation) between the heavier steps.
 const bar = document.querySelector<HTMLElement>('.ls-bar span')!,
     tip = document.querySelector('.ls-tip')!;
-const STEPS = ['Igniting engines', 'Charting planet 1', 'Warming shaders'];
+const STEPS = ['Igniting engines', 'Charting planet 1', 'Building caves', 'Warming shaders'];
 const step = async (i: number) => {
     tip.textContent = `${STEPS[i]}…`;
     bar.style.width = `${((i + 1) / STEPS.length) * 100}%`;
     await new Promise(requestAnimationFrame);
 };
+const fail = (msg: string) => {
+    boot.classList.remove('ready', 'dismissed', 'gone');
+    const sub = document.querySelector('.ls-sub')!;
+    sub.classList.add('error');
+    sub.textContent = msg;
+};
 (async () => {
     try {
         await step(0);
         const tier = detectTier();
+        if (tier === 'none')
+            return fail('This browser or device has no WebGL2, which Thrust Force needs. Try a current Chrome, Edge, Firefox or Safari.');
         document.documentElement.dataset.tier = tier;
         view = new View($('app'), TIER_SETTINGS[tier]);
+        watchContext(view.renderer.domElement);
         await step(1);
         attract = new Game(1);
         await step(2);
-        view.sync(attract, 0);
-        await view.renderer.compileAsync(view.scene, view.camera);
+        view.sync(attract, 0); // builds the planet's cheap parts and queues the rock chunks
+        view.pump(Infinity, attract.ship.y); // behind the splash, so build it all now
+        await step(3);
+        await view.warmup();
         document.querySelector('.ls-best')!.textContent = best ? `Best ${best.toLocaleString()}` : '';
         boot.classList.add('ready');
         ready = true;
         wake();
     } catch (err) {
-        const sub = document.querySelector('.ls-sub')!;
-        sub.classList.add('error');
-        sub.textContent = `Could not start WebGL: ${(err as Error).message}`;
+        fail(`Could not start WebGL: ${(err as Error).message}. Adding ?tier=low to the address may help.`);
     }
 })();
+
+// Lost WebGL context (GPU reset, driver update, too many tabs on a phone): reload once to get a
+// fresh one; if it happens again within a minute, explain instead of looping.
+function watchContext(canvas: HTMLCanvasElement) {
+    canvas.addEventListener('webglcontextlost', (e) => {
+        e.preventDefault();
+        if (!sessionStorage.getItem('tf-ctx-reload')) {
+            sessionStorage.setItem('tf-ctx-reload', '1');
+            location.reload();
+        } else fail('The graphics context was lost. Close other tabs or apps and reload the page.');
+    });
+    setTimeout(() => sessionStorage.removeItem('tf-ctx-reload'), 60000);
+}
 
 // Test hook (scripts/smoke.py reads ship state through it).
 Object.defineProperty(window, '__game', { get: () => game });

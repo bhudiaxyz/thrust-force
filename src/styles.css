@@ -596,6 +596,9 @@ body {
 #joy {
     display: none;
 }
+#joy {
+    position: fixed; /* nipplejs needs a positioned zone even while hidden */
+}
 @media (pointer: coarse) {
     #joy {
         display: block;
