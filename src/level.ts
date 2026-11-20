@@ -17,8 +17,8 @@
  *     mount points → pick() turrets and fuel cells with minimum spacing from each other and from
  *     the start, entrance, pod and reactor. Difficulty scalars (gravity, turret count, shaft
  *     radius, reactor HP, depth) all scale with n.
- *   - solidAt(lv, x, y): the single collision primitive. Above the grid = air (the exit);
- *     left/right/below the grid = rock.
+ *   - isRock / isAir (integer cells) and solidAt (world points): the one rock-or-air rule every
+ *     module shares. Above the grid = air (the exit); left / right / below the grid = rock.
  *   - lineOfSight(lv, a, b): samples the segment every 0.5 units with solidAt.
  *
  * Usage
@@ -126,13 +126,28 @@ export function difficulty(n: number): Difficulty {
 }
 
 
-export function solidAt(lv: Level, x: number, y: number): boolean {
-    if (y >= lv.h) return false;
-    if (x < 0 || x >= lv.w || y < 0) return true;
-    return lv.grid[Math.floor(y) * lv.w + Math.floor(x)] === 1;
+/** The grid part of a Level: enough for the cell tests (and usable before a Level exists). */
+export type Grid = Pick<Level, 'w' | 'h' | 'grid'>;
+
+/**
+ * Is integer cell (x, y) rock? The one rule every module shares: left / right of the grid and
+ * below row 0 are rock (walls and bedrock), above the grid is air (the exit).
+ */
+export function isRock(g: Grid, x: number, y: number): boolean {
+    return x < 0 || x >= g.w || y < 0 || (y < g.h && g.grid[y * g.w + x] === 1);
 }
 
-export function lineOfSight(lv: Level, a: Pt, b: Pt): boolean {
+/** Is integer cell (x, y) open air inside the playfield columns (sky above the grid counts)? */
+export function isAir(g: Grid, x: number, y: number): boolean {
+    return x >= 0 && x < g.w && y >= 0 && !isRock(g, x, y);
+}
+
+/** Is world point (x, y) inside rock? isRock on the containing cell. */
+export function solidAt(lv: Grid, x: number, y: number): boolean {
+    return isRock(lv, Math.floor(x), Math.floor(y));
+}
+
+export function lineOfSight(lv: Grid, a: Pt, b: Pt): boolean {
     const d = Math.hypot(b.x - a.x, b.y - a.y);
     const steps = Math.ceil(d / 0.5);
     for (let i = 1; i < steps; i++) {
@@ -240,7 +255,8 @@ export function generateLevel(n: number): Level {
         carve(p.x, p.y, 4.5, 3);
     }
 
-    const solid = (x: number, y: number) => x < 0 || x >= w || y < 0 || (y < h && grid[y * w + x] === 1);
+    const cells: Grid = { w, h, grid };
+    const solid = (x: number, y: number) => isRock(cells, x, y);
     const start = { x: ex + 0.5, y: Math.max(surface[ex], surface[ex - 1], surface[ex + 1]) + 8 };
     const pod = { x: cx - 9.5, y: floorY + 0.75 };
     const reactor = { x: cx + 9.5, y: floorY };

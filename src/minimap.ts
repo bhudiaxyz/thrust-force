@@ -28,7 +28,7 @@
  * See also: main.ts, level.ts (grid, surface), index.html (#minimap); DESIGN.md "10. UI".
  */
 import type { Game } from './game';
-import type { Level } from './level';
+import { isRock, type Level } from './level';
 import { COLORS } from './palette';
 
 const M = COLORS.minimap;
@@ -79,12 +79,12 @@ export class Minimap {
 
     private rebake(lv: Level) {
         this.level = lv;
-        const { w, h, grid } = lv;
+        const { w, h } = lv;
         this.bake.width = w;
         this.bake.height = h;
         const bctx = this.bake.getContext('2d')!;
         const img = bctx.createImageData(w, h);
-        const solid = (x: number, y: number) => x < 0 || x >= w || y < 0 || (y < h && grid[y * w + x] === 1);
+        const solid = (x: number, y: number) => isRock(lv, x, y);
         for (let y = 0; y < h; y++)
             for (let x = 0; x < w; x++) {
                 const i = ((h - 1 - y) * w + x) * 4; // canvas rows run top-down; the grid runs bottom-up

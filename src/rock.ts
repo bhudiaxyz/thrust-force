@@ -41,7 +41,7 @@
  * See also: view.ts (build), level.ts (grid, surface); DESIGN.md "7.2 Level meshes".
  */
 import * as THREE from 'three';
-import type { Level } from './level';
+import { isAir, type Level } from './level';
 import { rng } from './random';
 import { COLORS } from './palette';
 
@@ -71,8 +71,8 @@ function noise(x: number, y: number, s: number) {
 }
 
 export function blockAt(lv: Level, x: number, y: number): number {
-    const { w, h, grid } = lv;
-    const air = (xx: number, yy: number) => xx >= 0 && xx < w && yy >= 0 && (yy >= h || grid[yy * w + xx] === 0);
+    const { h } = lv;
+    const air = (xx: number, yy: number) => isAir(lv, xx, yy);
     const depth = lv.surface[x] - 1 - y; // 0 = the surface skin row
     if (depth <= 0) return air(x, y + 1) ? BLOCK.Topsoil : BLOCK.Gravel;
     if (depth < 4) return BLOCK.Gravel;

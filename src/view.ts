@@ -52,7 +52,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import type { Game } from './game';
-import { solidAt, type Level } from './level';
+import { isAir, isRock, solidAt, type Level } from './level';
 import type { TierSettings } from './tier';
 import { BLOCK, blockAt, rockMaterial, TINTLESS, wallMaterial } from './rock';
 import { COLORS, evenGlow, ramp, themeFor, type RGB } from './palette';
@@ -340,9 +340,7 @@ export class View {
         this.levelGroup.clear();
         const pal = themeFor(lv.n);
         this.scene.background = new THREE.Color(pal.sky);
-        const { w, h, grid } = lv;
-        const solid = (x: number, y: number) => x < 0 || x >= w || y < 0 || (y < h && grid[y * w + x] === 1);
-        const air = (x: number, y: number) => x >= 0 && x < w && y >= 0 && !solid(x, y);
+        const { w, h } = lv;
 
         // Rock: queued as CHUNK-row slices (including the MARGIN rows below the grid), built by
         // pump() nearest the ship first. Edge-strip colour is per planet, the material shared.
@@ -470,9 +468,9 @@ export class View {
     /** One horizontal slice of rock: voxel instances + neon edge strips, as two InstancedMeshes. */
     private buildChunk(y0: number, y1: number) {
         const { lv, deep, top, surf } = this.chunkCtx!;
-        const { w, h, grid } = lv;
-        const solid = (x: number, y: number) => x < 0 || x >= w || y < 0 || (y < h && grid[y * w + x] === 1);
-        const air = (x: number, y: number) => x >= 0 && x < w && y >= 0 && !solid(x, y);
+        const { w, h } = lv;
+        const solid = (x: number, y: number) => isRock(lv, x, y);
+        const air = (x: number, y: number) => isAir(lv, x, y);
         let count = 0;
         for (let y = y0; y < y1; y++) for (let x = -MARGIN; x < w + MARGIN; x++) if (solid(x, y)) count++;
         if (!count) return;
