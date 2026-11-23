@@ -6,7 +6,7 @@
  *   The smallest set of checks that fail if the core logic breaks, runnable without a browser.
  *
  * Operations
- *   1. Planets 1..50: a ship-sized (3x3 air) flood fill reaches the pod and reactor from the
+ *   1. Planets 1..100: a ship-sized (3x3 air) flood fill reaches the pod and reactor from the
  *      start; turrets and fuel sit in air; at least two turrets; generation is deterministic.
  *   2. rod() holds its length to 1e-9 over 2000 steps of falling and sideways thrust.
  *   3. A tilted idle ship falls, crashes once, loses a life and respawns.
@@ -17,10 +17,14 @@
  *   7. Difficulty never eases planet to planet (including mines, gates, lead aim), saturates at
  *      MAX_DIFFICULTY_AT, and planet 1 is roomy.
  *   8. Themes distinct within a cycle and cycling; evenGlow lands on NEON_LUMA.
- *   9. Planet names: 50 unique hand-picked, every name one capitalised word, stable.
- *  10. Checkpoints become the respawn point; resting on a pad refuels; mines from planet 8, gates
- *      from 15, no leading turrets before 20, reversed gravity on 10; an upside-down ceiling
- *      landing works on a reversed planet; a daily seed changes the layout deterministically.
+ *   9. Planet names: 100 unique hand-picked; planets 1..200 all distinct (no near-duplicates);
+ *      the daily name avoids every hand-picked one; every name one capitalised word, stable.
+ *  10. Checkpoints become the respawn point; resting on a pad refuels; mines from planet 11, gates
+ *      from 21, no leading turrets before 31, reversed gravity on 20 (never in band 1); band 1
+ *      stays gentle and band 2 is a clear step up; an upside-down ceiling landing works on a
+ *      reversed planet; a daily seed changes the layout deterministically.
+ *  11. The ghost turns the short way across ±180°; thrust skips the death pause only after the
+ *      first 0.7 s; a shot absorbed by the shield emits shieldHit and isn't fatal.
  *
  * Usage
  *   npm run check  (node --import ./scripts/ts-resolve.mjs scripts/check.ts). Prints
@@ -36,12 +40,13 @@
 import assert from "node:assert/strict";
 import { difficulty, generateLevel, MAX_DIFFICULTY_AT, solidAt, type Difficulty } from "../src/world/level";
 import { evenGlow, NEON_LUMA, PLANET_THEMES, themeFor } from "../src/core/palette";
-import { PLANET_NAMES, planetName } from "../src/world/names";
+import { dailyName, PLANET_NAMES, planetName, tooSimilar } from "../src/world/names";
 import { Game, rod, type Input } from "../src/core/game";
 import { classifyGpu } from "../src/render/tier";
+import { ghostPose, GHOST_DT, type Ghost } from "../src/core/save";
 import { BLOCK, blockAt } from "../src/render/rock";
 
-for (let n = 1; n <= 50; n++) {
+for (let n = 1; n <= 100; n++) {
     const lv = generateLevel(n);
     const open = (x: number, y: number) => {
         for (let dy = -1; dy <= 1; dy++)
@@ -222,9 +227,20 @@ for (let n = 1; n <= 50; n++) {
 }
 
 {
-    // Planet names: the 50 hand-picked ones are unique; every name is one capitalised word.
+    // Planet names: the 100 hand-picked ones are unique; every name is one capitalised word.
     assert.equal(PLANET_NAMES.length, MAX_DIFFICULTY_AT, "one hand-picked name per planet up to full difficulty");
     assert.equal(new Set(PLANET_NAMES).size, PLANET_NAMES.length, "duplicate planet name");
+    // Distinct, not just unique: no two names (hand-picked or generated, planets 1..200) are one
+    // edit apart or share their first three letters; the daily name avoids every hand-picked one.
+    const all = Array.from({ length: 200 }, (_, i) => planetName(i + 1));
+    for (let i = 0; i < all.length; i++)
+        for (let j = i + 1; j < all.length; j++)
+            assert.ok(
+                !tooSimilar(all[i], all[j]),
+                `planets ${i + 1} "${all[i]}" and ${j + 1} "${all[j]}" are too alike`
+            );
+    const daily = dailyName(20261123);
+    assert.ok(!PLANET_NAMES.some((n) => tooSimilar(n, daily)), `daily name "${daily}" too close to a planet name`);
     for (let n = 1; n <= 300; n++) assert.match(planetName(n), /^[A-Z][a-z]+$/, `planet ${n}: "${planetName(n)}"`);
     assert.equal(planetName(1), "Avren");
     assert.equal(planetName(77), planetName(77), "generated names must be stable");
@@ -257,16 +273,25 @@ for (let n = 1; n <= 50; n++) {
     assert.equal(pg.phase, "play", "pad landing crashed");
     assert.ok(pg.fuel > 25, `pad did not refuel: ${pg.fuel}`);
 
-    // Threats arrive gradually; reversed gravity every 10th planet.
-    assert.equal(generateLevel(7).mines.length, 0);
-    assert.ok(generateLevel(8).mines.length > 0, "mines from planet 8");
-    assert.equal(generateLevel(14).gates.length, 0);
-    assert.ok(generateLevel(15).gates.length > 0, "gates from planet 15");
-    assert.ok(!generateLevel(19).turrets.some((t) => t.lead));
-    assert.ok(generateLevel(10).gravity < 0 && generateLevel(11).gravity > 0, "reverse gravity on planet 10");
+    // Threats arrive band by band; reversed gravity on each band's last planet from 20.
+    assert.equal(generateLevel(10).mines.length, 0);
+    assert.ok(generateLevel(11).mines.length > 0, "mines from planet 11 (band 2)");
+    assert.equal(generateLevel(20).gates.length, 0);
+    assert.ok(generateLevel(21).gates.length > 0, "gates from planet 21 (band 3)");
+    assert.ok(!generateLevel(30).turrets.some((t) => t.lead), "no leading turrets before band 4");
+    assert.ok(generateLevel(10).gravity > 0, "band 1 never reverses gravity");
+    assert.ok(generateLevel(20).gravity < 0 && generateLevel(21).gravity > 0, "reverse gravity on planet 20");
+
+    // Bands: planets 1-10 stay gentle; each band starts with a clear step up.
+    const b1 = difficulty(1),
+        b10 = difficulty(10),
+        b11 = difficulty(11);
+    assert.ok(b10.t < 0.05, `band 1 should stay near the easiest settings (t ${b10.t.toFixed(3)})`);
+    assert.ok(b11.t - b10.t > 3 * (b10.t - b1.t), "band 2 should be a clear step up from band 1");
+    assert.equal(difficulty(100).t, 1);
 
     // Reversed gravity: an upside-down slow touchdown on a ceiling lands.
-    const rg = new Game(10);
+    const rg = new Game(20);
     rg.level.turrets.length = 0;
     rg.level.mines.length = 0;
     const lv = rg.level;
@@ -278,7 +303,7 @@ for (let n = 1; n <= 50; n++) {
                 [-2, -1].every((d) => !solidAt(lv, x + 0.5, y + d + 0.5))
             )
                 spot = { x: x + 0.5, y: y + 0.4 };
-    assert.ok(spot, "no ceiling found on planet 10");
+    assert.ok(spot, "no ceiling found on planet 20");
     Object.assign(rg.ship, { x: spot.x, y: spot.y - 0.5, vx: 0, vy: 1, a: Math.PI });
     for (let i = 0; i < 120; i++) rg.update(1 / 120, idle);
     assert.equal(rg.phase, "play", "upside-down ceiling landing should not crash");
@@ -289,6 +314,37 @@ for (let n = 1; n <= 50; n++) {
     assert.deepEqual(d1.grid, d2.grid);
     assert.notDeepEqual(d1.grid, generateLevel(12).grid);
     assert.match(d1.name, /^[A-Z][a-z]+$/);
+}
+
+{
+    // Ghost: interpolating across ±180° takes the short way (no full spin).
+    const g: Ghost = { time: 1, samples: new Int16Array([0, 0, 3100, 0, 0, -3100, 0, 0, -3100]) };
+    const mid = ghostPose(g, GHOST_DT / 2)!;
+    assert.ok(Math.abs(Math.abs(mid.a) - 3.14) < 0.05, `ghost should turn through ±π, got ${mid.a.toFixed(2)}`);
+
+    // Faster restarts: thrust skips the death pause, but only after the first moment.
+    const fr = new Game(1);
+    const idle: Input = { left: false, right: false, thrust: false, fire: false, shield: false };
+    const thrust: Input = { ...idle, thrust: true };
+    fr.ship.a = 1.3;
+    for (let i = 0; i < 120 * 20 && fr.phase === "play"; i++) fr.update(1 / 120, idle);
+    assert.equal(fr.phase, "dead");
+    for (let i = 0; i < 30; i++) fr.update(1 / 120, thrust); // 0.25 s: too soon to skip
+    assert.equal(fr.phase, "dead", "death pause should not be skippable immediately");
+    for (let i = 0; i < 120 && fr.phase === "dead"; i++) fr.update(1 / 120, thrust);
+    assert.equal(fr.phase, "play", "thrust should skip the rest of the death pause");
+
+    // A shot absorbed by the shield is reported (for the edge flash), not fatal.
+    const sh = new Game(1);
+    sh.level.turrets.length = 0;
+    let shieldHits = 0;
+    sh.onEvent = (e) => e === "shieldHit" && shieldHits++;
+    Object.assign(sh.ship, { x: sh.level.start.x, y: sh.level.start.y, vx: 0, vy: 0, a: 0 });
+    sh.update(3 / 120, { ...idle, shield: true }); // raise the shield first
+    sh.bullets.push({ x: sh.ship.x + 0.5, y: sh.ship.y, vx: 0, vy: 0, life: 1, enemy: true });
+    sh.update(1 / 120, { ...idle, shield: true });
+    assert.equal(shieldHits, 1);
+    assert.equal(sh.phase, "play");
 }
 
 console.log("check: ok");

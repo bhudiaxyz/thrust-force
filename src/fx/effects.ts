@@ -19,6 +19,11 @@
  *     inside the planet).
  *   - setNeon(rgb) per planet; reset() on a new planet; hiddenObjects() for shader warm-up.
  *   - shake: camera-shake amount raised by big effects; View reads and decays it.
+ *   - trail(i, x, y, on, hot, dt): two glowing ribbon trails (0 = ship tail, 1 = towed pod),
+ *     triangle strips in the planet's neon that taper and fade to the tail, brighter while
+ *     thrusting; a jump of over 4 units (respawn) restarts them.
+ *   - explode(..., nearRock): blasts against a wall throw ~30% of their cubes in the planet's rock
+ *     colour (setRockColour).
  *
  * Usage
  *   View owns one Effects; main.ts reaches it through View.explode / View.burst.
@@ -38,6 +43,9 @@ import type { TierSettings } from "../render/tier";
 
 const C = COLORS;
 const MAX_DEBRIS = 400;
+/** Engine trail: points kept per ribbon, and the ribbon's half-width at its head. */
+const TRAIL_N = 36,
+    TRAIL_W = 0.16;
 /** Cave dust volume (world units) wrapped around the camera. */
 const DUST_BOX: [number, number] = [60, 44];
 
@@ -108,6 +116,10 @@ export class Effects {
     private s = new THREE.Vector3();
     private c = new THREE.Color();
     private rgb: RGB = [0, 0, 0];
+    /** Rock colour of the current planet, mixed into debris from blasts near walls. */
+    private rock: RGB = [0.4, 0.35, 0.45];
+    /** Ribbon trails (0 = ship, 1 = towed pod): recent positions, newest first, and a heat 0..1. */
+    private trails: { mesh: THREE.Mesh; pts: number[]; heat: number }[] = [];
 
     constructor(scene: THREE.Scene, ts: TierSettings, tex: THREE.Texture) {
         this.maxP = ts.particles;
@@ -143,6 +155,32 @@ export class Effects {
         }
         scene.add(this.sparks, this.debris, this.flash);
 
+        // Engine trails: triangle-strip ribbons, additive and HDR so they glow, fading to the tail.
+        for (let t = 0; t < 2; t++) {
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(TRAIL_N * 2 * 3), 3));
+            geo.setAttribute("color", new THREE.BufferAttribute(new Float32Array(TRAIL_N * 2 * 3), 3));
+            const idx: number[] = [];
+            for (let i = 0; i < TRAIL_N - 1; i++)
+                idx.push(i * 2, i * 2 + 1, i * 2 + 2, i * 2 + 1, i * 2 + 3, i * 2 + 2);
+            geo.setIndex(idx);
+            geo.setDrawRange(0, 0);
+            const mesh = new THREE.Mesh(
+                geo,
+                new THREE.MeshBasicMaterial({
+                    vertexColors: true,
+                    transparent: true,
+                    depthWrite: false,
+                    blending: THREE.AdditiveBlending,
+                    side: THREE.DoubleSide,
+                    toneMapped: false,
+                })
+            );
+            mesh.frustumCulled = false;
+            this.trails.push({ mesh, pts: [], heat: 0 });
+            scene.add(mesh);
+        }
+
         if (ts.dust > 0) {
             const n = ts.dust;
             this.dust = pointsLayer(n, 0.12, tex);
@@ -169,6 +207,58 @@ export class Effects {
     /** New planet: drop everything in flight. */
     reset() {
         this.pn = this.dn = 0;
+        for (const t of this.trails) t.pts.length = 0;
+    }
+
+    setRockColour(rgb: RGB) {
+        this.rock = rgb;
+    }
+
+    /**
+     * Feed trail i a new head position. on = the body exists (else the trail drains away); hot =
+     * thrusting, which brightens it. A jump of more than 4 units (respawn) restarts the trail.
+     */
+    trail(i: number, x: number, y: number, on: boolean, hot: boolean, dt: number) {
+        const t = this.trails[i];
+        t.heat += ((hot ? 1 : on ? 0.3 : 0) - t.heat) * Math.min(1, dt * 6);
+        const p = t.pts;
+        if (!on) {
+            if (p.length) p.splice(-4, 4); // shrink from the tail
+        } else if (!p.length || Math.hypot(p[0] - x, p[1] - y) > 4) {
+            p.length = 0;
+            p.push(x, y);
+        } else if (Math.hypot(p[0] - x, p[1] - y) > 0.12) {
+            p.unshift(x, y);
+            if (p.length > TRAIL_N * 2) p.length = TRAIL_N * 2;
+        }
+        const n = p.length / 2;
+        const pos = t.mesh.geometry.attributes.position.array as Float32Array;
+        const col = t.mesh.geometry.attributes.color.array as Float32Array;
+        const [r, g, b] = this.neon;
+        for (let k = 0; k < n; k++) {
+            const a = Math.max(0, k - 1),
+                c = Math.min(n - 1, k + 1);
+            let dx = p[a * 2] - p[c * 2],
+                dy = p[a * 2 + 1] - p[c * 2 + 1];
+            const len = Math.hypot(dx, dy) || 1;
+            dx /= len;
+            dy /= len;
+            const f = 1 - k / TRAIL_N;
+            const w = TRAIL_W * f;
+            pos[k * 6] = p[k * 2] - dy * w;
+            pos[k * 6 + 1] = p[k * 2 + 1] + dx * w;
+            pos[k * 6 + 2] = -0.1;
+            pos[k * 6 + 3] = p[k * 2] + dy * w;
+            pos[k * 6 + 4] = p[k * 2 + 1] - dx * w;
+            pos[k * 6 + 5] = -0.1;
+            const v = f * f * t.heat * 0.9;
+            col[k * 6] = col[k * 6 + 3] = r * v;
+            col[k * 6 + 1] = col[k * 6 + 4] = g * v;
+            col[k * 6 + 2] = col[k * 6 + 5] = b * v;
+        }
+        t.mesh.geometry.attributes.position.needsUpdate = true;
+        t.mesh.geometry.attributes.color.needsUpdate = true;
+        t.mesh.geometry.setDrawRange(0, Math.max(0, n - 1) * 6);
     }
 
     /** Objects that start hidden, so View.warmup() can compile their shaders up front. */
@@ -208,7 +298,8 @@ export class Effects {
         this.pv[i * 2 + 1] += vy;
     }
 
-    explode(x: number, y: number, big: boolean) {
+    /** nearRock: the blast is against a wall, so some debris is chunks of that rock. */
+    explode(x: number, y: number, big: boolean, nearRock = false) {
         const k = big ? 1 : 0.45;
         this.flash.position.set(x, y, 4);
         this.flash.intensity = Math.max(this.flash.intensity, big ? 900 : 260);
@@ -238,7 +329,8 @@ export class Effects {
             this.dLife[i * 2] = this.dLife[i * 2 + 1] = life;
             this.dSize[i] = 0.12 + Math.random() * (big ? 0.3 : 0.18);
             const kind = Math.random();
-            const tint = kind < 0.62 ? null : kind < 0.82 ? C.fx.debrisHull : this.neon;
+            const tint =
+                nearRock && kind < 0.3 ? this.rock : kind < 0.62 ? null : kind < 0.82 ? C.fx.debrisHull : this.neon;
             for (let j = 0; j < 3; j++) this.dTint[i3 + j] = tint ? tint[j] : 0;
         }
         this.shake = Math.max(this.shake, big ? 1.6 : 0.5);

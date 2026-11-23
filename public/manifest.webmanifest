@@ -1,0 +1,19 @@
+{
+    "name": "Thrust Force",
+    "short_name": "Thrust Force",
+    "description": "Gravity-and-inertia cave shooter. Tow the pod, crack the reactor, escape the planet.",
+    "start_url": "./",
+    "scope": "./",
+    "display": "fullscreen",
+    "display_override": ["fullscreen", "standalone"],
+    "orientation": "any",
+    "background_color": "#05060f",
+    "theme_color": "#05060f",
+    "categories": ["games"],
+    "icons": [
+        { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+        { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+        { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+        { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+    ]
+}

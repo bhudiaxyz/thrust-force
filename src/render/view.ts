@@ -32,6 +32,11 @@
  *   - degrade(): one step down in cost (DPR → shadows → bloom); returns false when nothing is
  *     left. Called by main.ts's frame-time governor.
  *   - resize(): on window resize.
+ *   - The back wall is desaturated (HSL −0.35) so strongly tinted themes (Sulphur) don't haze.
+ *   - Depth: rock and the back wall darken with depth (depthFade, to ~55% at the floor); a faint
+ *     horizon glow band in the planet's neon sits behind the surface line.
+ *   - landed(strength): a short camera dip after a clean landing. setRockTime drives the breathing
+ *     ore / crystal glow each frame.
  *
  * Usage
  *   main.ts creates one View with TIER_SETTINGS[tier]; at boot: sync(attract, 0), pump(Infinity),
@@ -58,10 +63,10 @@ import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import type { Game } from "../core/game";
-import { gateIn, gateOn, GATE_WARN, isAir, isRock, type Level } from "../world/level";
+import { gateIn, gateOn, GATE_WARN, isAir, isRock, solidAt, type Level } from "../world/level";
 import { dotTexture, Effects, pointsLayer } from "../fx/effects";
 import type { TierSettings } from "./tier";
-import { BLOCK, blockAt, rockMaterial, TINTLESS, wallMaterial } from "./rock";
+import { BLOCK, blockAt, rockMaterial, setRockTime, TINTLESS, wallMaterial } from "./rock";
 import { COLORS, evenGlow, themeFor, type RGB } from "../core/palette";
 
 const C = COLORS;
@@ -80,6 +85,30 @@ const STAR_LAYERS = [
 ];
 
 const neonMat = ([r, g, b]: RGB) => new THREE.MeshBasicMaterial({ color: new THREE.Color(r, g, b), toneMapped: false });
+
+/** Brightness factor by depth: 1 near the surface, about 0.55 at the planet's floor. */
+function depthFade(y: number, h: number) {
+    return 0.55 + 0.45 * Math.pow(Math.min(1, Math.max(0, y) / h), 0.8);
+}
+
+/** Vertical soft band (alpha mask) for the horizon glow; built once and shared. */
+let horizonTex: THREE.Texture | null = null;
+function horizonTexture() {
+    if (horizonTex) return horizonTex;
+    const c = document.createElement("canvas");
+    c.width = 4;
+    c.height = 128;
+    const g = c.getContext("2d")!;
+    const grad = g.createLinearGradient(0, 0, 0, 128);
+    grad.addColorStop(0, "rgba(255,255,255,0)");
+    grad.addColorStop(0.55, "rgba(255,255,255,0.9)");
+    grad.addColorStop(0.62, "rgba(255,255,255,1)");
+    grad.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 4, 128);
+    horizonTex = new THREE.CanvasTexture(c);
+    return horizonTex;
+}
 
 export class View {
     readonly renderer: THREE.WebGLRenderer;
@@ -105,6 +134,8 @@ export class View {
     private gates: { beam: THREE.Mesh; mat: THREE.MeshBasicMaterial }[] = [];
     private ghost = new THREE.Group();
     private ghostPose: { x: number; y: number; a: number } | null = null;
+    /** Camera dip after a landing (world units), springing back to 0. */
+    private dip = 0;
     private reactorCore!: THREE.Mesh;
     private reactorLight = new THREE.PointLight(C.light.reactor, 50, 18, 1.6);
     private bullets: THREE.Points;
@@ -293,6 +324,8 @@ export class View {
         this.neon = evenGlow(pal.neon);
         this.stripMat.color.setRGB(...this.neon);
         this.fx.setNeon(this.neon);
+        const rockCol = new THREE.Color(pal.top);
+        this.fx.setRockColour([rockCol.r * 1.6, rockCol.g * 1.6, rockCol.b * 1.6]);
         this.chunkCtx = {
             lv,
             deep: new THREE.Color(pal.deep),
@@ -309,11 +342,39 @@ export class View {
         for (let x = w - 1; x >= 0; x--) back.lineTo(x + 0.5, lv.surface[x] - 1);
         const wall = new THREE.Mesh(
             new THREE.ShapeGeometry(back),
-            wallMaterial(new THREE.Color(pal.deep).multiplyScalar(0.6))
+            wallMaterial(new THREE.Color(pal.deep).offsetHSL(0, -0.35, 0).multiplyScalar(0.6))
         );
+        // Darker the deeper it goes (vertex colours multiply the wall colour), so a deep planet's
+        // bottom feels deep.
+        const wg = wall.geometry,
+            wp = wg.attributes.position;
+        const wc = new Float32Array(wp.count * 3);
+        for (let i = 0; i < wp.count; i++) {
+            const f = depthFade(wp.getY(i), h);
+            wc.set([f, f, f], i * 3);
+        }
+        wg.setAttribute("color", new THREE.BufferAttribute(wc, 3));
+        (wall.material as THREE.MeshStandardMaterial).vertexColors = true;
         wall.position.z = -1.45;
         wall.receiveShadow = true;
         this.levelGroup.add(wall);
+
+        // Horizon glow: a soft band of the planet's neon behind the surface line, far back so it
+        // parallaxes with the far stars.
+        const horizonY = Math.min(...lv.surface);
+        const glow = new THREE.Mesh(
+            new THREE.PlaneGeometry(w * 6, 40),
+            new THREE.MeshBasicMaterial({
+                map: horizonTexture(),
+                color: new THREE.Color(...this.neon).multiplyScalar(0.05),
+                transparent: true,
+                depthWrite: false,
+                blending: THREE.AdditiveBlending,
+                toneMapped: false,
+            })
+        );
+        glow.position.set(w / 2, horizonY + 4, -120);
+        this.levelGroup.add(glow);
 
         // Stars: STAR_LAYERS at very different depths. Under the perspective camera a layer at depth
         // d slides across the screen at CAM_Z / (CAM_Z + d) of the playfield's speed, so near, mid
@@ -524,6 +585,7 @@ export class View {
                 const tile = inside ? blockAt(lv, x, y) : BLOCK.Stone;
                 tiles[i] = tile;
                 col.copy(deep).lerp(top, Math.max(0, y) / h);
+                col.multiplyScalar(depthFade(y, h));
                 if (inside && y >= lv.surface[sx] - 4) col.lerp(surf, y >= lv.surface[sx] - 1 ? 1 : 0.45);
                 if (!inside) col.multiplyScalar(0.7);
                 // The tile textures average ~75% brightness, so lift the tint to keep the palette.
@@ -595,6 +657,11 @@ export class View {
     }
 
     /** Best-run ghost pose for this frame (null hides it). */
+    /** A clean landing: a short camera dip, scaled by how hard it came down (0..1). */
+    landed(strength = 0.5) {
+        this.dip = Math.max(this.dip, 0.25 + 0.35 * strength);
+    }
+
     setGhost(p: { x: number; y: number; a: number } | null) {
         this.ghostPose = p;
     }
@@ -606,7 +673,14 @@ export class View {
 
     /** Layered voxel explosion: see Effects.explode. */
     explode(x: number, y: number, big: boolean) {
-        this.fx.explode(x, y, big);
+        const lv = this.builtFor;
+        let nearRock = false;
+        if (lv)
+            for (let k = 0; k < 8 && !nearRock; k++) {
+                const a = (k / 8) * Math.PI * 2;
+                nearRock = solidAt(lv, x + Math.cos(a) * 2.2, y + Math.sin(a) * 2.2);
+            }
+        this.fx.explode(x, y, big, nearRock);
     }
 
     private tmpM = new THREE.Matrix4();
@@ -642,6 +716,8 @@ export class View {
         }
 
         const p = g.pod;
+        this.fx.trail(0, s.x + Math.sin(s.a) * 0.5, s.y - Math.cos(s.a) * 0.5, alive, g.thrusting && alive, dt);
+        this.fx.trail(1, p.x, p.y, p.attached && alive, false, dt);
         this.pod.visible = p.attached ? alive : true;
         this.pod.position.set(p.x, p.y, 0);
         this.pod.rotation.y = this.time;
@@ -742,11 +818,14 @@ export class View {
         if (this.time < 0.1 || Math.hypot(c.x - tx, c.y - ty) > 60) c.set(tx, ty, z);
         c.x += (tx - c.x) * k;
         c.y += (ty - 4 - c.y) * k;
+        this.dip *= Math.exp(-dt * 7);
+        c.y -= this.dip * Math.min(1, dt * 60);
         c.z = z;
         this.fx.shake *= Math.exp(-dt * 3);
         const sh = this.fx.shake;
         this.camera.lookAt(c.x + (Math.random() - 0.5) * sh, c.y + 4 + (Math.random() - 0.5) * sh, 0);
 
+        setRockTime(this.rockMat, this.time);
         this.fx.update(dt, lv, c.x, c.y + 4, s.y < lv.h - 40);
 
         this.composer.render(dt);

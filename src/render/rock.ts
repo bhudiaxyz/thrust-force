@@ -26,6 +26,8 @@
  *     of stretching it.
  *   - wallMaterial(color): the back wall gets the Stone tile on its own repeating texture
  *     (ShapeGeometry UVs are world units, so it repeats once per cell).
+ *   - Breathing glow: the emissive (ore / crystal) pixels pulse slowly, each cell offset by its
+ *     position (vPhase from instanceMatrix); setRockTime(mat, t) advances the uTime uniform.
  *
  * Usage
  *   view.ts build(): set geometry attribute aTile (InstancedBufferAttribute, 1 float per
@@ -281,15 +283,18 @@ export function rockMaterial(bump: boolean) {
     // Tells three.js the patched shader differs per bump setting (programs are cached by key).
     mat.customProgramCacheKey = () => `rock-${bump}`;
     mat.onBeforeCompile = (sh) => {
+        sh.uniforms.uTime = { value: 0 };
+        mat.userData.shader = sh; // setRockTime() reaches the uniform through this
         sh.vertexShader = sh.vertexShader
             .replace(
                 "#include <common>",
-                "#include <common>\nattribute float aTile;\nvarying float vTile;\nvarying vec2 vLocal;"
+                "#include <common>\nattribute float aTile;\nvarying float vTile;\nvarying vec2 vLocal;\nvarying float vPhase;"
             )
             .replace(
                 "#include <uv_vertex>",
                 `#include <uv_vertex>
                 vTile = aTile;
+                vPhase = dot(instanceMatrix[3].xy, vec2(0.71, 0.37)); // per-cell pulse offset
                 vec3 lp = position + vec3(0.5, 0.5, 1.5);
                 vLocal = abs(normal.z) > 0.5 ? lp.xy : abs(normal.x) > 0.5 ? lp.zy : lp.xz;`
             );
@@ -299,12 +304,14 @@ export function rockMaterial(bump: boolean) {
                 `#include <common>
                 varying float vTile;
                 varying vec2 vLocal;
+                varying float vPhase;
+                uniform float uTime;
                 vec2 tileUv() { return vec2((fract(vLocal.x) + vTile) / ${TILES}.0, fract(vLocal.y)); }`
             )
             .replace("#include <map_fragment>", "diffuseColor *= texture2D(map, tileUv());")
             .replace(
                 "#include <emissivemap_fragment>",
-                "totalEmissiveRadiance *= texture2D(emissiveMap, tileUv()).rgb;"
+                "totalEmissiveRadiance *= texture2D(emissiveMap, tileUv()).rgb * (0.7 + 0.3 * sin(uTime * 1.6 + vPhase));"
             )
             // Bump: sample the atlas through tileUv(), but take screen-space derivatives from the
             // continuous vLocal (scaled to atlas units) so fract() wrap-arounds aren't seen as
@@ -331,4 +338,10 @@ export function rockMaterial(bump: boolean) {
 
 export function wallMaterial(color: THREE.Color) {
     return new THREE.MeshStandardMaterial({ map: getAtlas().stone, color, roughness: 1 });
+}
+
+/** Advance the breathing pulse of ore and crystal glow (call once per frame with seconds). */
+export function setRockTime(mat: THREE.Material, t: number) {
+    const sh = mat.userData.shader as { uniforms: { uTime: { value: number } } } | undefined;
+    if (sh) sh.uniforms.uTime.value = t;
 }

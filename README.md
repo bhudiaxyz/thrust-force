@@ -9,20 +9,22 @@ It takes its inspiration from the classic Commodore Amiga-era thrust-and-gravity
 - **Real inertia**: rotate, thrust and fight gravity. A slow, upright touchdown lands; anything else crashes.
 - **Tow-rod physics**: the pod outweighs your ship and hangs on a rigid rod, so carrying it means swinging a pendulum through the tunnels.
 - **Reactor gambit**: each hit on the reactor briefly stuns the turrets. Hit it enough times and it goes critical, leaving ten seconds to get out. Escape and the planet goes with it, for a big bonus.
-- **A gentle start, a long climb**: planet 1 is roomy, light and lightly defended. Over 50 planets, gravity grows, the shafts get deeper and twistier with dead ends, loops and open caverns, and the turrets multiply and sharpen their aim.
-- **New threats as you go**: homing mines from planet 8, cycling laser gates from planet 15, turrets that lead their shots from planet 20, and reversed gravity on every 10th planet, where you land upside down on ceilings.
+- **A gentle start, a long climb**: planet 1 is roomy, light and lightly defended. Over 100 planets, climbing in bands of ten, gravity grows, the shafts get deeper and twistier with dead ends, loops and open caverns, and the turrets multiply and sharpen their aim.
+- **New threats as you go**: homing mines from planet 11, cycling laser gates from planet 21, turrets that lead their shots from planet 31, and reversed gravity on the last planet of each band from planet 20, where you land upside down on ceilings.
 - **Checkpoints and landing pads**: glowing beacons at each switchback become your respawn point, and gentle touchdowns on green pads refuel you.
 - **Medals and planet select**: earn up to three stars per planet (pod recovered, reactor destroyed, beating par time), then replay any planet you've unlocked, racing a translucent ghost of your best run.
 - **Daily planet**: a fresh layout every day, the same for everyone, with your best score for the day kept.
 - **Every planet has its own name and look**: _Planet 1: Avren_, _Planet 2: Kesra_ and so on, each with one of 24 colour themes.
 - **Voxel geology**: rock is built from pixel-art blocks (topsoil, gravel, strata, cobble, stone and basalt), with glowing ore veins and crystals in the cave walls.
-- **Neon voxel look**: glowing edge lines, a light that rides with your ship, bloom, shadows and dramatic voxel explosions with tumbling embers and shockwaves.
+- **Neon voxel look**: glowing edge lines, a light that rides with your ship, neon ribbon trails, breathing ore and crystals, caves that darken with depth, bloom, shadows and dramatic voxel explosions with tumbling embers, rock debris and shockwaves.
+- **Feedback you can feel**: the screen edges flash when your shield takes a hit and pulse on low fuel or a critical reactor; landings dip the camera; menus tick and chirp; press thrust to skip the death pause.
 - **Minimap**: the whole planet in the corner, with you, the pod, the reactor, turrets and fuel. It folds away to an icon on small screens.
 - **Fuel matters**: thrust and shield both burn fuel. Land on pads, or hover over fuel cells with the tractor beam, to refuel.
 - **Synthesised sound and music**: every effect and a procedural soundtrack, which speeds up when the reactor goes critical, are generated live with WebAudio. There are no audio files.
 - **Menus that work everywhere**: main menu, planet select, options, a three-page how-to, planet intro cards, end-of-planet summaries and game-over stats with sharing, all usable by mouse, keyboard, touch or gamepad.
 - **Options and assists**: music and effects volume, quality override, stick sensitivity, a left-handed touch layout, colour-blind-friendly minimap markers, hints, and assists (slower game, auto-levelling, free shield) to make it easier.
 - **Gamepads and haptics**: standard gamepads fly the ship and drive the menus; Android phones vibrate on crashes, landings and lock-ons.
+- **Install it**: add it to your home screen for a full-screen launch and offline play. On phones the screen stays awake during a run.
 - **Runs everywhere**: desktop, laptop, tablet and phone, including devices about 7 years old. Quality adapts to the GPU and steps itself down if frames run slow. Override it with `?tier=high|mobile-high|mid|low`.
 
 ## Quick start

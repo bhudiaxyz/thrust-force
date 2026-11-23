@@ -9,6 +9,8 @@
  *   - drawHud(game): computes each displayed value as a string and hands it to put(), which
  *     writes to the DOM only when the string differs from last time. Fuel width is rounded to
  *     0.5%, the reactor bar to 1% and message opacity to 0.01, so steady values cause no writes.
+ *   - Screen-edge glow (#vignette): toggles 'low-fuel' (slow red pulse under 20 fuel) and
+ *     'critical' (fast amber pulse during the reactor countdown) through the same change cache.
  *
  * Usage
  *   main.ts calls drawHud(game) every active frame after game.update().
@@ -28,7 +30,8 @@ const score = el("h-score"),
     fuel = el("h-fuel"),
     reactor = el("h-reactor"),
     count = el("h-count"),
-    msg = el("h-msg");
+    msg = el("h-msg"),
+    vignette = el("vignette");
 
 const cache = new Map<string, string>();
 function el(id: string) {
@@ -50,5 +53,9 @@ export function drawHud(g: Game) {
     put("reactor", `${Math.round((g.reactorHp / g.level.reactorHp) * 100)}%`, (v) => (reactor.style.width = v));
     put("count", g.critical >= 0 ? g.critical.toFixed(1) : "", (v) => (count.textContent = v));
     put("msg", g.messageTime > 0 ? g.message : "", (v) => (msg.textContent = v));
+    put("lowFuel", String(g.fuel < 20 && g.phase === "play"), (v) =>
+        vignette.classList.toggle("low-fuel", v === "true")
+    );
+    put("critical", String(g.critical >= 0), (v) => vignette.classList.toggle("critical", v === "true"));
     put("msgA", Math.min(1, Math.max(0, g.messageTime * 2)).toFixed(2), (v) => (msg.style.opacity = v));
 }

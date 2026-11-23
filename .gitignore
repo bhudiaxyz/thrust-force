@@ -64,3 +64,8 @@ pnpm-debug.log*
 test-results/
 playwright-report/
 blob-report/
+
+# ...except the app icons and link-preview card the site ships (public/icons).
+!public/icons/
+!public/icons/*.png
+!public/icons/*.svg

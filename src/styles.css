@@ -1103,3 +1103,47 @@ body:not(.playing) #joy {
         display: none;
     }
 }
+
+/* Screen-edge glow: a red flash when the shield takes a hit, a slow red pulse on low fuel, an
+ * amber pulse while the reactor is critical. Pure CSS over the canvas, never intercepts input. */
+#vignette {
+    position: fixed;
+    inset: 0;
+    z-index: 5;
+    pointer-events: none;
+    opacity: 0;
+    box-shadow: inset 0 0 120px 30px color-mix(in srgb, var(--hot) 70%, transparent);
+}
+#vignette.low-fuel {
+    animation: edge-pulse 1.4s ease-in-out infinite;
+}
+#vignette.critical {
+    box-shadow: inset 0 0 140px 36px color-mix(in srgb, var(--amber) 65%, transparent);
+    animation: edge-pulse 0.5s ease-in-out infinite;
+}
+#vignette.flash {
+    animation: edge-flash 0.35s ease-out;
+}
+body:not(.playing) #vignette {
+    display: none;
+}
+@keyframes edge-pulse {
+    50% {
+        opacity: 0.55;
+    }
+}
+@keyframes edge-flash {
+    0% {
+        opacity: 0.9;
+    }
+    100% {
+        opacity: 0;
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    #vignette.low-fuel,
+    #vignette.critical {
+        animation: none;
+        opacity: 0.35;
+    }
+}

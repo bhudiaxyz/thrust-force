@@ -28,6 +28,11 @@
  *     audio; wake() restarts it. A slow interval polls gamepads so they can wake menus.
  *   - govern(): average frame > SLOW_MS for SLOW_FOR s → view.degrade(); GRACE s between steps.
  *   - watchContext(): lost WebGL context → reload once; a second loss within a minute → message.
+ *   - Phones: startRun keeps the screen awake and enters full screen (player/device.ts); showMenu
+ *     releases the wake lock; returning to a hidden tab mid-run re-takes it.
+ *   - Feedback: shieldHit → red edge flash (flashEdge); land → camera dip; menu highlight moves →
+ *     uiMove tick, presses → uiSelect chirp (the first press anywhere unlocks audio).
+ *   - registerServiceWorker(): production builds register public/sw.js for install / offline play.
  *
  * Usage
  *   Loaded by index.html as the only module script; expects its DOM ids (#app, #hud, #minimap,
@@ -59,6 +64,7 @@ import {
     type Ghost,
 } from "./core/save";
 import { isMuted, setEngine, setMusicIntensity, setVolumes, sfx, suspendAudio, toggleMute, unlock } from "./fx/audio";
+import { enterFullscreen, keepAwake } from "./player/device";
 import { clearInput, HELP, isTouch, pollPads, setPadHandler, setStickThrust, setupInput, steer } from "./player/input";
 import { detectTier, TIER_SETTINGS, type Tier } from "./render/tier";
 import { View } from "./render/view";
@@ -95,7 +101,7 @@ const BURSTS: Partial<Record<GameEvent, [count: number, speed: number, rgb: RGB,
     hit: [6, 4, COLORS.fx.hit, 0.3],
     fuel: [30, 5, COLORS.fx.fuel, 0.8],
     attach: [24, 4, COLORS.fx.attach, 0.6],
-    land: [10, 2, COLORS.fx.land, 0.4],
+    land: [22, 3, COLORS.fx.land, 0.6],
     checkpoint: [20, 4, COLORS.fixture.checkpointOn, 0.6],
     pad: [16, 3, COLORS.fixture.pad, 0.5],
 };
@@ -110,7 +116,7 @@ const BUZZ: Partial<Record<GameEvent, number>> = {
 };
 
 const DAILY_SEED = todaySeed();
-const DAILY_N = 12 + (DAILY_SEED % 15); // difficulty of today's daily planet
+const DAILY_N = 15 + (DAILY_SEED % 40); // difficulty of today's daily planet (bands 2-6)
 const DAILY_KEY = String(DAILY_SEED);
 
 /** Hints already shown this run (each fires once). */
@@ -173,14 +179,26 @@ function onEvent(e: GameEvent, x: number, y: number) {
     if (b) view.burst(x, y, ...b);
     const buzz = BUZZ[e];
     if (buzz) navigator.vibrate?.(buzz);
+    if (e === "land") view.landed(0.6);
+    if (e === "shieldHit") flashEdge();
     if (e === "complete") setTimeout(showSummary, 1400);
     if (e === "gameover") setPause(true);
+}
+
+/** A brief red flash around the screen edges (shield took a hit). */
+function flashEdge() {
+    const v = $("vignette");
+    v.classList.remove("flash");
+    void v.offsetWidth; // restart the animation
+    v.classList.add("flash");
 }
 
 // ---- Runs and menus ---------------------------------------------------------------------------
 
 function startRun(n: number, seed?: number) {
     unlock();
+    enterFullscreen();
+    void keepAwake(true);
     closeSheet();
     mode = seed === undefined ? "campaign" : "daily";
     game = new Game(n, seed);
@@ -197,6 +215,7 @@ function startRun(n: number, seed?: number) {
 }
 
 function showMenu() {
+    void keepAwake(false);
     game = null;
     paused = false;
     pauseEl.classList.remove("open");
@@ -431,7 +450,27 @@ function wireEvents() {
     });
     document.addEventListener("visibilitychange", () => {
         if (document.hidden && game && game.phase === "play" && !paused && !sheetOpen()) setPause(true);
+        if (!document.hidden && game) void keepAwake(true); // browsers drop the lock when hidden
     });
+    // Menu sounds: a tick when the highlight moves (keyboard, gamepad or mouse), a chirp on select.
+    let lastHover: Element | null = null;
+    const MENU_CTRL = ".menu-btn, #sheet button, #pause button";
+    document.addEventListener("focusin", (e) => {
+        const t = e.target as Element;
+        if (t.matches(MENU_CTRL) && t !== lastHover) sfx.uiMove();
+        lastHover = t;
+    });
+    document.addEventListener("pointerover", (e) => {
+        const t = (e.target as Element).closest(MENU_CTRL);
+        if (t && t !== lastHover) {
+            lastHover = t;
+            sfx.uiMove();
+        }
+    });
+    document.addEventListener("click", (e) => (e.target as Element).closest(MENU_CTRL) && sfx.uiSelect(), true);
+    // The first press anywhere unlocks audio, so menus can make sound before a run starts.
+    addEventListener("pointerdown", unlock, { once: true });
+    addEventListener("keydown", unlock, { once: true });
 }
 
 // ---- Hints (early planets) --------------------------------------------------------------------
@@ -556,6 +595,12 @@ function fail(msg: string) {
     sub.textContent = msg;
 }
 
+/** Installable / offline play (public/sw.js). Production builds only: never on the dev server. */
+function registerServiceWorker() {
+    if (!import.meta.env.PROD || !("serviceWorker" in navigator)) return;
+    navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).catch(() => {});
+}
+
 function watchContext(canvas: HTMLCanvasElement) {
     canvas.addEventListener("webglcontextlost", (e) => {
         e.preventDefault();
@@ -597,6 +642,7 @@ async function startup() {
         bar.style.width = "100%";
         applyOptions();
         showMenu();
+        registerServiceWorker();
     } catch (err) {
         fail(`Could not start WebGL: ${(err as Error).message}. Adding ?tier=low to the address may help.`);
     }

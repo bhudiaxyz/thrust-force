@@ -9,11 +9,13 @@
  *   spatial questions the game asks: is this cell / point rock, can A see B, is a gate on.
  *
  * Operations
- *   - difficulty(n): every knob eased (t^1.2) from planet 1 to MAX_DIFFICULTY_AT (50), then held:
+ *   - difficulty(n): every knob in BANDs of 10 planets up to MAX_DIFFICULTY_AT (100), then held.
+ *     Within a band difficulty creeps up only 20% of a band step; each new band is a clear step
+ *     up, and band 1 (planets 1-10) stays near the easiest settings to teach the controls. Knobs:
  *     gravity, depth, switchbacks, tunnel radius / pinch / wobble, pockets, branches, loops,
  *     caverns, turrets (count, rate, range, bullet speed, aim, fraction that lead), fuel, reactor
- *     HP; plus threats that arrive on schedule — mines from 8, gates from 15, leading turrets from
- *     20 — and reversed gravity on every 10th planet.
+ *     HP; plus mechanics introduced band by band: mines from 11, laser gates from 21, leading
+ *     turrets from 31; reversed gravity on each band's last planet from 20 (20, 30, 40…).
  *   - generateLevel(n, { seed }): surface → chamber → shaft switchbacks joined by stroke()s →
  *     caverns, loops, dead-end branches → mount points → pads (before turrets) → turrets, fuel →
  *     mines on shaft legs → gates across mid-leg tunnel rows → name and par time. A seed (daily
@@ -25,7 +27,7 @@
  * Usage
  *   core/game.ts: generateLevel in Game.load(); solidAt / lineOfSight / gateOn every step;
  *   lv.diff for turret and mine behaviour. render/, ui/, fx/ read the grid and fixtures.
- *   scripts/check.ts flood-fills planets 1–50 and checks the curve and schedule.
+ *   scripts/check.ts flood-fills planets 1–100 and checks the bands and schedule.
  *
  * Highlights
  *   - Pure and deterministic: no three.js or DOM; same n (and seed), same planet.
@@ -35,7 +37,7 @@
  * See also: core/game.ts, world/names.ts, core/random.ts, render/view.ts, scripts/check.ts;
  * DESIGN.md "4. Coordinate system and the grid", "5. Level generation and difficulty".
  */
-import { planetName } from "./names";
+import { dailyName, planetName } from "./names";
 import { rng } from "../core/random";
 
 export interface Pt {
@@ -66,7 +68,9 @@ export interface Gate {
     phase: number; // 0..1 offset into the cycle
 }
 /** Fraction of each gate cycle the beam is on, and the warning flicker before it switches on. */
-export const MAX_DIFFICULTY_AT = 50;
+export const MAX_DIFFICULTY_AT = 100;
+/** Planets per difficulty band: difficulty steps up at the start of each band. */
+export const BAND = 10;
 /** Columns on each side never carved, so the playfield is walled up into the sky. */
 export const WALL = 3;
 export const GATE_ON = 0.55,
@@ -106,13 +110,13 @@ export interface Level {
 
 /**
  * Every difficulty knob, as a function of planet number. Planet 1 is roomy and gentle; the curve
- * eases in (t^1.2, so the early planets stay friendly) and reaches full difficulty at
- * planet MAX_DIFFICULTY_AT, then holds there. "Harder" means heavier gravity and more, faster,
+ * climbs in bands of BAND planets (a small creep within a band, a clear step between bands) and
+ * reaches full difficulty at planet MAX_DIFFICULTY_AT, then holds there. "Harder" means heavier gravity and more, faster,
  * sharper-shooting turrets; "more complex" means a deeper planet with more switchbacks, dead-end
  * side passages, loops (alternate routes), open caverns and tighter, more wobbly tunnels.
  */
 export interface Difficulty {
-    t: number; // 0 (planet 1) .. 1 (planet MAX_DIFFICULTY_AT = 50 and beyond), after easing
+    t: number; // 0 (planet 1) .. 1 (planet MAX_DIFFICULTY_AT = 100 and beyond), banded
     gravity: number;
     depth: number; // rows of planet below the sky
     turns: number; // shaft switchbacks
@@ -130,14 +134,23 @@ export interface Difficulty {
     turretRange: number;
     bulletSpeed: number;
     aimSpread: number; // radians of random aim error
-    mines: number; // drifting proximity mines (from planet 8)
-    gates: number; // cycling laser gates (from planet 15)
-    leadAim: number; // fraction of turrets that lead their shots (from planet 20)
-    reversed: boolean; // gravity pulls up (every 10th planet)
+    mines: number; // drifting proximity mines (from band 2, planet 11)
+    gates: number; // cycling laser gates (from band 3, planet 21)
+    leadAim: number; // fraction of turrets that lead their shots (from band 4, planet 31)
+    reversed: boolean; // gravity pulls up (each band's last planet, from planet 20)
+    band: number; // 1-based difficulty band (planets 1-10 = 1)
 }
 
 export function difficulty(n: number): Difficulty {
-    const t = Math.min(1, Math.max(0, (n - 1) / (MAX_DIFFICULTY_AT - 1))) ** 1.2;
+    // Bands of BAND planets. Within a band difficulty creeps up only a little (WITHIN = 20% of a band
+    // step); each new band is a clear step up. Band 1 (planets 1-10) stays near the easiest
+    // settings so new pilots learn the controls; the last band ends at t = 1.
+    const WITHIN = 0.2;
+    const bands = MAX_DIFFICULTY_AT / BAND;
+    const k = Math.min(Math.max(n, 1), MAX_DIFFICULTY_AT) - 1;
+    const band = Math.floor(k / BAND),
+        within = (k % BAND) / (BAND - 1);
+    const t = (band + WITHIN * within) / (bands - 1 + WITHIN);
     const L = (a: number, b: number) => a + (b - a) * t;
     const R = (a: number, b: number) => Math.round(L(a, b));
     return {
@@ -159,10 +172,12 @@ export function difficulty(n: number): Difficulty {
         turretRange: L(20, 32),
         bulletSpeed: L(7, 15),
         aimSpread: L(0.4, 0.08),
-        mines: n < 8 ? 0 : R(2, 9),
-        gates: n < 15 ? 0 : R(1, 5),
-        leadAim: n < 20 ? 0 : L(0.25, 0.85),
-        reversed: n % 10 === 0,
+        // New mechanics arrive at the start of bands 2, 3 and 4, so each is learned on its own.
+        mines: n <= BAND ? 0 : R(2, 10),
+        gates: n <= 2 * BAND ? 0 : R(1, 6),
+        leadAim: n <= 3 * BAND ? 0 : L(0.3, 0.9),
+        reversed: n % BAND === 0 && n >= 2 * BAND,
+        band: band + 1,
     };
 }
 
@@ -406,7 +421,7 @@ export function generateLevel(n: number, opts: { seed?: number } = {}): Level {
         turrets,
         fuel,
         exitY: h - 3,
-        name: planetName(opts.seed === undefined ? n : 51 + (seed % 100000)),
+        name: opts.seed === undefined ? planetName(n) : dailyName(seed),
         diff,
         checkpoints: mid,
         pads,

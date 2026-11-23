@@ -16,6 +16,10 @@
  *     on the fastest completion. saveGhost / loadGhost store one per planet ('tf-ghost-<n>') as
  *     base64 Int16 triples (x, y × 50, angle × 1000), about 5 kB for a 90 s run.
  *   - todaySeed(): yyyymmdd as a number, the daily planet's layout seed.
+ *   - ghostPose interpolates the angle the short way round, so a ghost never spins when its
+ *     recorded heading crosses ±180°.
+ *   - Headless (no window, e.g. scripts/check.ts): load() returns defaults without touching
+ *     storage.
  *
  * Usage
  *   main.ts reads save.options at boot, calls recordResult() on each completed planet,
@@ -77,6 +81,8 @@ const DEFAULTS: SaveData = {
 export const save: SaveData = load();
 
 function load(): SaveData {
+    // Headless (scripts/check.ts under Node): no browser storage, so start from defaults.
+    if (typeof window === "undefined") return structuredClone(DEFAULTS);
     try {
         const raw = JSON.parse(localStorage.getItem("tf-save") ?? "{}");
         const legacyBest = Number(localStorage.getItem("tf-best") ?? 0);
@@ -162,6 +168,6 @@ export function ghostPose(g: Ghost, t: number): { x: number; y: number; a: numbe
     return {
         x: at(i, 0) + (at(i + 1, 0) - at(i, 0)) * k,
         y: at(i, 1) + (at(i + 1, 1) - at(i, 1)) * k,
-        a: at(i, 2) + (at(i + 1, 2) - at(i, 2)) * k,
+        a: at(i, 2) + Math.atan2(Math.sin(at(i + 1, 2) - at(i, 2)), Math.cos(at(i + 1, 2) - at(i, 2))) * k,
     };
 }

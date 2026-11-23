@@ -21,6 +21,8 @@
  *   - setVolumes(music, sfx): 0..1 each (Options); toggleMute() / isMuted(): master on / off,
  *     persisted in localStorage 'tf-muted'.
  *   - suspendAudio(): idle; unlock() resumes.
+ *   - UI sounds: sfx.uiMove (a soft tick when the menu highlight moves) and sfx.uiSelect (a chirp
+ *     on select); sfx.shieldHit for a blocked shot.
  *
  * Usage
  *   main.ts: unlock() from a user gesture, sfx[event]() from Game.onEvent, setEngine() and
@@ -49,6 +51,9 @@ export const sfx = {
     extra: () => [784, 1046, 1318].forEach((f, i) => setTimeout(() => tone(f, 0.15, "square", 0.06), i * 90)),
     checkpoint: () => [660, 990].forEach((f, i) => setTimeout(() => tone(f, 0.12, "sine", 0.1), i * 70)),
     pad: () => tone(440, 0.3, "sine", 0.08, 880),
+    shieldHit: () => (tone(1500, 0.1, "triangle", 0.06, 2200), noise(0.06, 0.08, 6000)),
+    uiMove: () => tone(1320, 0.035, "sine", 0.035, 1500),
+    uiSelect: () => tone(660, 0.09, "triangle", 0.07, 1320),
     gameover: () => tone(400, 1.4, "triangle", 0.15, 80),
 };
 

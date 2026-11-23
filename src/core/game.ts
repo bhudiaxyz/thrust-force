@@ -25,6 +25,9 @@
  *     passed (else the entrance); a critical reactor rebuilds the planet.
  *   - rod(a, ma, b, mb, len) (rigid constraint, position + velocity projection by inverse mass)
  *     and hull(x, y, a) (six collision points) are exported for checks.
+ *   - A shot absorbed by the shield emits 'shieldHit' (main.ts flashes the screen edges).
+ *   - Faster restarts: after CFG.skipDeathAfter (0.7 s) of the death pause, thrust or fire skips
+ *     the rest.
  *
  * Usage
  *   const g = new Game(n, seed?); g.onEvent = (e, x, y) => ...; g.assist = options.assist; each
@@ -75,6 +78,7 @@ export type GameEvent =
     | "extra"
     | "checkpoint"
     | "pad"
+    | "shieldHit"
     | "gameover";
 export type Phase = "play" | "dead" | "complete" | "over";
 
@@ -129,6 +133,7 @@ export const CFG = {
     reactorTime: 10,
     stun: 4,
     padRefuel: 15, // fuel per second while landed on a pad
+    skipDeathAfter: 0.7, // seconds of the death pause before thrust / fire skips the rest
     checkpointReach: 5, // how close a switchback must be passed to count
     mineSight: 12,
     mineSpeed: 2.4,
@@ -299,7 +304,12 @@ export class Game {
 
         if (this.phase === "dead") this.time += h;
         if (this.phase !== "play") {
-            if (this.phase === "over" || this.phase === "complete" || (this.phaseTimer -= h) > 0) return;
+            if (this.phase === "over" || this.phase === "complete") return;
+            this.phaseTimer -= h;
+            // Impatient pilots: after a moment, thrust or fire skips the rest of the death pause.
+            const skip =
+                this.phase === "dead" && (inp.thrust || inp.fire) && this.phaseTimer < 2.2 - CFG.skipDeathAfter;
+            if (this.phaseTimer > 0 && !skip) return;
             if (this.lives <= 0) {
                 this.phase = "over";
                 this.emit("gameover", s);
@@ -564,6 +574,7 @@ export class Game {
             if (b.enemy) {
                 if (this.phase !== "play" || dist(b, s) > 1) return true;
                 if (!this.shielding) this.die();
+                else this.emit("shieldHit", b);
                 return false;
             }
             for (const tu of lv.turrets)

@@ -47,7 +47,7 @@ This document covers how the game is built: module layout, data model, generatio
 | Formatting | Prettier per `.prettierrc` (4-space, double quotes, ES5 trailing commas, 120 columns)         |
 
 ```
-index.html              DOM shell: #app, #hud, #minimap, #joy, #touch, #boot (splash + main menu), #pause, #sheet, #intro
+index.html              DOM shell: #app, #hud, #minimap, #joy, #touch, #vignette, #boot (splash + main menu), #pause, #sheet, #intro; manifest + link-preview tags
 src/
   main.ts               composition root: boot, menus and run flow, commands, frame loop, idle, governor, hints, ghosts
   styles.css            theme variables, HUD, minimap, splash / menu, dialogs, intro card, touch layout
@@ -61,17 +61,22 @@ src/
     names.ts            single-word planet names (pure)
   player/
     input.ts            keyboard, touch buttons, nipplejs stick, gamepads → Input; control help text
+    device.ts           phones: screen wake lock during a run, full screen on touch devices
   render/
     view.ts             three.js scene: ship, pod, fixtures, threats, ghost, streamed rock, stars, camera, post-FX
     rock.ts             voxel block types: placement rule, pixel-art atlas, instanced rock material
     tier.ts             GPU classification + per-tier quality table (classifier is pure)
   fx/
-    effects.ts          sparks, voxel explosions, exhaust, cave dust; shared sprite helpers
+    effects.ts          sparks, voxel explosions, exhaust, ribbon trails, cave dust; shared sprite helpers
     audio.ts            WebAudio effects, engine rumble and procedural music
   ui/
     hud.ts              HUD writer (DOM writes only on change)
     menu.ts             main menu, dialog sheets (planet select, options, how to play, summary), intro card
     minimap.ts          2D-canvas planet map with live markers; static planet preview
+public/
+  manifest.webmanifest  installable app (full screen, icons)
+  sw.js                 service worker: offline play, never pins an old build
+  icons/                app icons from the emblem, link-preview card (og-card.png)
 scripts/
   check.ts              headless asserts (npm run check)
   smoke.py              Playwright browser smoke test (menus, desktop, phone, landscape, idle)
@@ -120,32 +125,32 @@ The split keeps the logic checkable without a browser, and it lets the title scr
 
 ### 5.1 The difficulty curve
 
-`difficulty(n)` returns every knob for planet `n`. Progress is `t = clamp((n − 1) / 49, 0, 1) ^ 1.2`, so planet 1 is the easiest, the curve eases in gently, reaches full difficulty at **planet 50** (`MAX_DIFFICULTY_AT`) and holds there. Each knob is a linear blend `a + (b − a)·t`:
+`difficulty(n)` returns every knob for planet `n`. The curve climbs in **bands of 10 planets** (`BAND`) up to **planet 100** (`MAX_DIFFICULTY_AT`) and holds there. With `band = ⌊(n − 1) / 10⌋` and `within = ((n − 1) mod 10) / 9`, progress is `t = (band + 0.2·within) / 9.2`: inside a band difficulty creeps up only 20% of a band step, and each new band is a clear step up. Band 1 (planets 1–10) stays near the easiest settings, so new pilots learn the controls. Each knob is a linear blend `a + (b − a)·t`:
 
-| Knob                   | Planet 1          | Planet 50 | Effect                                        |
-| ---------------------- | ----------------- | --------- | --------------------------------------------- |
-| `gravity`              | 2.4               | 7.2       | weight of the ship and pod                    |
-| `depth`                | 80                | 250       | rows of planet under the sky                  |
-| `turns`                | 2                 | 9         | shaft switchbacks                             |
-| `radius` / `minRadius` | 5.4 / 4.2         | 3.5 / 3.0 | tunnel width, and the narrowest pinch allowed |
-| `wobble`               | 0.6               | 1.6       | radius wobble amplitude (pinches)             |
-| `pocket`               | 30%               | 70%       | chance of a side pocket per switchback        |
-| `branches`             | 0                 | 5         | winding dead-end side passages                |
-| `loops`                | 0                 | 2         | alternate routes rejoining the shaft          |
-| `caverns`              | 0                 | 3         | open halls along the shaft                    |
-| `turrets`              | 2                 | 22        | turret count                                  |
-| `turretInterval`       | 4.5 s             | 1.1 s     | mean time between shots                       |
-| `turretRange`          | 20                | 32        | how far turrets see                           |
-| `bulletSpeed`          | 7                 | 15        | enemy bullet speed                            |
-| `aimSpread`            | ±0.4 rad          | ±0.08 rad | enemy aim error                               |
-| `fuelCells`            | 3                 | 7         | refuelling points                             |
-| `reactorHp`            | 8                 | 30        | hits to make the reactor critical             |
-| `mines`                | 0 (until 8)       | 2 → 9     | homing proximity mines, from planet 8         |
-| `gates`                | 0 (until 15)      | 1 → 5     | cycling laser gates, from planet 15           |
-| `leadAim`              | 0 (until 20)      | 25% → 85% | turrets that lead their shots, from 20        |
-| `reversed`             | every 10th planet | —         | gravity pulls up                              |
+| Knob                   | Planet 1     | Planet 100 | Effect                                        |
+| ---------------------- | ------------ | ---------- | --------------------------------------------- |
+| `gravity`              | 2.4          | 7.2        | weight of the ship and pod                    |
+| `depth`                | 80           | 250        | rows of planet under the sky                  |
+| `turns`                | 2            | 9          | shaft switchbacks                             |
+| `radius` / `minRadius` | 5.4 / 4.2    | 3.5 / 3.0  | tunnel width, and the narrowest pinch allowed |
+| `wobble`               | 0.6          | 1.6        | radius wobble amplitude (pinches)             |
+| `pocket`               | 30%          | 70%        | chance of a side pocket per switchback        |
+| `branches`             | 0            | 5          | winding dead-end side passages                |
+| `loops`                | 0            | 2          | alternate routes rejoining the shaft          |
+| `caverns`              | 0            | 3          | open halls along the shaft                    |
+| `turrets`              | 2            | 22         | turret count                                  |
+| `turretInterval`       | 4.5 s        | 1.1 s      | mean time between shots                       |
+| `turretRange`          | 20           | 32         | how far turrets see                           |
+| `bulletSpeed`          | 7            | 15         | enemy bullet speed                            |
+| `aimSpread`            | ±0.4 rad     | ±0.08 rad  | enemy aim error                               |
+| `fuelCells`            | 3            | 7          | refuelling points                             |
+| `reactorHp`            | 8            | 30         | hits to make the reactor critical             |
+| `mines`                | 0 (until 11) | 2 → 10     | homing proximity mines, from planet 11        |
+| `gates`                | 0 (until 21) | 1 → 6      | cycling laser gates, from planet 21           |
+| `leadAim`              | 0 (until 31) | 30% → 90%  | turrets that lead their shots, from 31        |
+| `reversed`             | 20, 30, 40 … | —          | gravity pulls up (each band's last planet)    |
 
-Threats arrive on a schedule so each one gets introduced on its own: mines on planet 8, laser gates on 15, leading turrets on 20, and gravity reverses on every 10th planet. "Harder" means heavier gravity and more, faster, better-aimed turrets. "More complex to navigate" means deeper planets with more switchbacks, dead ends, loops, caverns and tighter, more wobbly tunnels. The curve is stored on the level as `lv.diff`; `game.ts` reads the turret knobs from it. `check.ts` asserts that no knob ever eases from one planet to the next (§15).
+New mechanics arrive at the start of a band so each one gets introduced on its own: mines in band 2 (planet 11), laser gates in band 3 (21), leading turrets in band 4 (31), and gravity reverses on the last planet of each band from planet 20 (never in band 1). "Harder" means heavier gravity and more, faster, better-aimed turrets. "More complex to navigate" means deeper planets with more switchbacks, dead ends, loops, caverns and tighter, more wobbly tunnels. The curve is stored on the level as `lv.diff`; `game.ts` reads the turret knobs from it. `check.ts` asserts that no knob ever eases from one planet to the next, that band 1 stays gentle and that band 2 is a clear step up (§15).
 
 ### 5.2 Generation
 
@@ -167,7 +172,7 @@ The `Level` also holds the **mutable entity state** for that playthrough (turret
 
 ### 5.3 Planet names (`world/names.ts`)
 
-Planets 1–50 take one of 50 hand-picked, invented single-word names (`PLANET_NAMES`: Avren, Kesra, Vael, Orin…), one per planet up to full difficulty. Beyond 50, a seeded syllable generator (`rng(n * 104729 + 7)`) builds 2–3 syllables: consonant + vowel, with a cluster (th, dr, kr, st) only at the start and an optional soft coda, so names stay pronounceable ("Stazan", "Norol"). Selection is by index, so new names should be appended, not inserted. Names show as **"Planet 1: Avren"** on the intro card, HUD, summary and pause dialog.
+Planets 1–100 take one of 100 hand-picked, invented single-word names (`PLANET_NAMES`: Avren, Kesra, Vael, Orin…), one per planet up to full difficulty. Beyond 100, a seeded syllable generator (`rng(n * 104729 + 7)`) builds 2–3 syllables: consonant + vowel, with a cluster (th, dr, kr, st) only at the start and an optional soft coda, so names stay pronounceable ("Stazan", "Norol"). Names are kept **distinct**, not just unique: `tooSimilar(a, b)` rejects two names one edit apart or sharing their first three letters. The hand-picked list obeys it, the generator retries with new seeds until a name clears every earlier planet's, and `dailyName(seed)` clears every hand-picked name. Selection is by index, so new names should be appended, not inserted. Names show as **"Planet 1: Avren"** on the intro card, HUD, summary and pause dialog.
 
 ## 6. Game rules and physics (`core/game.ts`)
 
@@ -184,7 +189,7 @@ Planets 1–50 take one of 50 hand-picked, invented single-word names (`PLANET_N
 | `complete` | planet cleared, `result` set | waits; main.ts's summary card calls `next()` → `load(n + 1)`                          |
 | `over`     | final; main.ts shows dialog  | a new `Game` is created by main.ts                                                    |
 
-Bullets keep flying during the pauses, so explosions and stray shots finish naturally.
+After `skipDeathAfter` (0.7 s) of the death pause, thrust or fire skips the rest, so retries are quick. Bullets keep flying during the pauses, so explosions and stray shots finish naturally.
 
 ### 6.3 Ship flight
 
@@ -201,7 +206,7 @@ The rod length is **the distance at the moment of grabbing** (min 2). A fixed le
 
 ### 6.5 Tractor beam and shield
 
-These share one button. While `shielding`: an unattached pod within 5.5 latches on (`attach`); the first fuel cell below the ship within 4.5 drains at up to 40/s (`beam` is set for drawing; an emptied cell pays 300 and fires `fuel`); enemy bullets that reach the ship are absorbed.
+These share one button. While `shielding`: an unattached pod within 5.5 latches on (`attach`); the first fuel cell below the ship within 4.5 drains at up to 40/s (`beam` is set for drawing; an emptied cell pays 300 and fires `fuel`); enemy bullets that reach the ship are absorbed, each firing a `shieldHit` event (main.ts flashes the screen edges red).
 
 ### 6.6 Weapons and turrets
 
@@ -239,6 +244,8 @@ Above `exitY` with the pod and/or a critical reactor, the planet completes: the 
 - **Camera**: perspective, 50° FOV, z = `CAM_Z` 34 (30 / aspect on portrait screens). It chases `ship + 0.3·velocity` with exponential smoothing (`1 − e^(−4dt)`) and sits 4 units below its look-at point, so floors show their tops and tunnels read as 3D. `fx.shake` jitters the look-at target.
 - **Lights**: a hemisphere light, a directional sun that follows the ship (`ship + (−12, 30, 36)`), a cyan light riding 7 units in front of the ship (brighter when thrusting), a pulsing reactor light, and the explosion flash.
 - **What glows**: ACES Filmic tone mapping. "Neon" materials use `toneMapped: false` with HDR colours (channels above 1), so they cross the bloom threshold (0.82) while lit surfaces mostly don't. That one rule decides what glows.
+- **Depth**: rock voxels and the back wall darken with depth (`depthFade`, to about 55% at the planet's floor), so a deep planet's bottom feels deep. The back wall is also desaturated (HSL −0.35) so strongly tinted themes such as Sulphur don't haze the tunnels. A faint horizon band of the planet's neon sits far back behind the surface line.
+- **Landing dip**: `landed(strength)` gives the camera a short downward dip on a clean landing.
 - **Stars**: three `STAR_LAYERS` at very different depths: near (z −6…−16, 15% of stars), mid (−40…−80, 30%) and far (−160…−320, 55%). Under the perspective camera a layer at depth `d` moves at `CAM_Z / (CAM_Z + d)` of the playfield's speed (about 75%, 35% and 12%), which gives a strong parallax. Each layer spreads in proportion to the view size at its depth, and far stars are drawn larger to offset perspective shrinking.
 
 ### 7.2 Level meshes and streaming
@@ -269,7 +276,7 @@ Eight block types, each a 16 × 16 pixel-art tile painted at runtime into an **a
 Region noise is seeded by the planet number, so each planet's strata differ. `rockMaterial(bump)` is a `MeshStandardMaterial` patched in `onBeforeCompile`:
 
 - **Tile UVs**: the vertex shader derives tile-local coordinates from object-space position on each face (`vLocal`), so the 1×1×3 box repeats a tile 3 times along its depth instead of stretching it. The fragment shader picks the atlas tile with `aTile` and `fract()`. Nearest filtering without mipmaps keeps pixels crisp and makes the `fract` seams invisible.
-- **Glow**: an emissive atlas lights only the ore and crystal pixels, so they bloom.
+- **Glow**: an emissive atlas lights only the ore and crystal pixels, so they bloom. They **breathe**: the emissive pulses slowly, each cell offset by its position (`vPhase` from `instanceMatrix`), driven by `setRockTime(mat, t)` each frame.
 - **Bump relief** (high tiers): the albedo atlas doubles as a bump map. The bump chunk is replaced so it samples through `tileUv()` but takes screen-space derivatives from the continuous `vLocal`; otherwise every `fract()` wrap would read as a cliff in the height field. `customProgramCacheKey` keeps the bump and plain variants apart.
 
 ### 7.4 Per-frame posing (`sync`)
@@ -293,6 +300,10 @@ Ship (extruded arrowhead, neon `EdgesGeometry` outline, canopy, flickering flame
     3. two **shockwave rings**: neon, then amber, expanding with ease-out and fading
     4. up to 70 **tumbling voxel cubes**: 62% embers that cool white-hot → amber → red → soot along `COLORS.ember` (sampled with `ramp()`), 20% hull-grey chunks and 18% neon chunks. They fall, spin and **bounce off rock** (`solidAt`, losing energy), so they skitter along floors.
     5. camera shake (1.6 / 0.5).
+
+    With `nearRock` (a blast against a wall), about 30% of the cubes take the planet's rock colour (`setRockColour`), tying explosions to the landscape.
+
+- **Ribbon trails**: `trail(i, x, y, on, hot, dt)` draws two glowing triangle strips (0 = ship tail, 1 = towed pod) in the planet's neon, tapering and fading to the tail and brighter while thrusting. A jump of more than 4 units (a respawn) restarts them.
 - **Cave dust** (high tiers): motes drifting in a 60 × 44 box that wraps around the camera, shown only inside the planet.
 - `hiddenObjects()` and `setDebrisWarm()` let `View.warmup()` compile these shaders before play (§10.3). `dotTexture()` and `pointsLayer()` are shared with `View` for bullets and stars.
 
@@ -362,19 +373,22 @@ Plain DOM over the canvas, styled by `styles.css` from palette-driven CSS variab
     - **Planet summary**: stars, bonus rows counting up (pod, planet destroyed, time vs par), total, "new best", ships lost; Next planet / Main menu (daily: Main menu).
 - **Planet intro card** (`#intro`): on each planet load, a 3.2 s card under the HUD with the planet number and name, theme, gravity (and "reversed!"), turrets, mines, gates, par, and a pixel map preview (`Minimap.preview`).
 - **HUD** (`ui/hud.ts`): score, "Planet n: Name", ships, fuel bar (blinks red under 20), reactor HP bar, critical countdown, a fading message line. It's `pointer-events: none`.
+- **Screen-edge glow** (`#vignette`, pure CSS over the canvas): a slow red pulse under 20 fuel (`low-fuel`), a fast amber pulse during the reactor countdown (`critical`), and a brief red flash when a shot hits the shield (`flash`).
 - **Minimap** (`ui/minimap.ts`, bottom right): the planet baked once per level into a 1 px-per-cell canvas and blitted with nearest scaling. Markers: pads, checkpoints (dim / lit), gate lines, mines, the ghost, fuel, live turrets, reactor (red strobe when critical), pod, ship with heading tick, and a box for the camera view; a colour-blind-safe marker set via Options. Redrawn at 15 Hz. It collapses to a map icon only when the screen can't spare the room (open needs about 600 × 504 CSS px), so phones start iconified and tablets and desktops start open, until the player toggles it (N / tap).
 - **Pause and game over** (`#pause`): Resume (Esc), Restart planet (R), Sound (M), Main menu (Q), with the device's bindings and a short how-to. As the **game-over** card (`data-kind="over"`) it adds the run's stats (planets, pods, reactors, turrets, mines, flight time), **Fly again** (same planet, fresh lives) and **Share result** (`navigator.share`, else copied to the clipboard).
 - **Hints** (Options, planets 1–2 only): one-time messages when the player first nears the pod, latches it, runs low on fuel, comes in turret range, or passes a checkpoint, worded for the device's controls.
+- **Menu sounds**: a soft tick (`sfx.uiMove`) when the highlight moves by mouse, keys or gamepad, and a chirp (`sfx.uiSelect`) on select. The first press anywhere unlocks audio.
+- **Phones** (`player/device.ts`): a run takes a Screen Wake Lock (released on the menu, re-taken when a hidden tab returns mid-run) and, on touch devices, enters full screen. Both are best-effort; iPhone Safari has no element full screen.
 - **Haptics**: `navigator.vibrate` on crashes, explosions, landing, lock-on, checkpoints and pads (Android browsers; iOS ignores it).
 - **Touch**: tap targets are at least 44 px on coarse pointers, keyboard hints are hidden there, and the touch flight controls show only during a run.
 - **Accessibility basics**: `role="dialog"`, `aria-modal`, `aria-labelledby`, `aria-live` messages, labelled buttons, focus moved into each dialog, visible focus outlines, and `prefers-reduced-motion` stops splash and intro animation.
 
 ### 12.2 Progress, medals, daily planet and ghosts (`core/save.ts`)
 
-- **One save** (`localStorage['tf-save']`, JSON): planets cleared, best stars per planet, best score, daily bests by date, whether How to play has been seen, and all options. Loading merges field by field over defaults, so new options never break an old save; every write is try/caught (private mode, quota).
+- **One save** (`localStorage['tf-save']`, JSON; under Node, with no `window`, `load()` returns defaults): planets cleared, best stars per planet, best score, daily bests by date, whether How to play has been seen, and all options. Loading merges field by field over defaults, so new options never break an old save; every write is try/caught (private mode, quota).
 - **Medals**: `recordResult()` keeps the best star count per planet and raises `cleared`; Planet select and Continue read them.
-- **Daily planet**: `todaySeed()` (yyyymmdd) seeds the layout; its difficulty is planet `12 + seed % 15`. Everyone gets the same planet that day; the day's best score is kept.
-- **Ghosts**: while a campaign planet is played, main.ts samples the ship (x, y, wrapped angle) every 0.1 s of planet time. On completion, if it beat the stored run, `saveGhost()` stores it (`tf-ghost-<n>`, base64 Int16 triples, about 5 kB for 90 s). On the next attempt `ghostPose()` interpolates the stored run at the current planet time, shown as a translucent ship and a minimap dot.
+- **Daily planet**: `todaySeed()` (yyyymmdd) seeds the layout; its difficulty is planet `15 + seed % 40` (bands 2–6). Everyone gets the same planet that day; the day's best score is kept.
+- **Ghosts**: while a campaign planet is played, main.ts samples the ship (x, y, wrapped angle) every 0.1 s of planet time. On completion, if it beat the stored run, `saveGhost()` stores it (`tf-ghost-<n>`, base64 Int16 triples, about 5 kB for 90 s). On the next attempt `ghostPose()` interpolates the stored run at the current planet time (the angle the short way round, so it never spins across ±180°), shown as a translucent ship and a minimap dot.
 
 ## 13. Audio and music (`fx/audio.ts`)
 
@@ -408,16 +422,17 @@ Then options are applied and the main menu shows. Any error lands in the splash 
 ## 15. Checks and tooling
 
 - **`npm run check`** (`scripts/check.ts`, Node's native TypeScript; `ts-resolve.mjs` adds `.ts` to extensionless imports) asserts:
-    1. Planets **1–50**: a flood fill through cells with a full 3 × 3 of air (ship-sized) reaches the pod and reactor from the start; turrets and fuel sit in air; there are at least two turrets; generation is deterministic.
+    1. Planets **1–100**: a flood fill through cells with a full 3 × 3 of air (ship-sized) reaches the pod and reactor from the start; turrets and fuel sit in air; there are at least two turrets; generation is deterministic.
     2. The rod holds its length to 1e-9 over 2000 steps of falling and sideways thrust.
     3. A tilted idle ship falls, crashes once, loses a life and respawns.
     4. Grabbing the pod from closer than the rod length doesn't crash and lifts it; carrying it above `exitY` completes the planet with a result, **waits** for the summary, and `next()` loads planet 2.
     5. GPU renderer strings for current and about 7-year-old devices map to the expected tiers.
     6. All eight block types appear; topsoil only on the surface skin; ore and crystal only on air-facing cells.
-    7. Difficulty never eases from one planet to the next (mines, gates and lead aim included), saturates at planet 50, and planet 1 is roomy.
+    7. Difficulty never eases from one planet to the next (mines, gates and lead aim included), saturates at planet 100, and planet 1 is roomy.
     8. Theme names are distinct within a cycle, themes wrap, and `evenGlow` lands every neon on `NEON_LUMA`.
-    9. The 50 hand-picked names are unique, every name is one capitalised word, and generated names are stable.
-    10. Passing a checkpoint makes it the respawn point; resting on a pad refuels; mines start on planet 8 and gates on 15; no leading turrets before 20; planet 10's gravity is reversed and an upside-down slow ceiling touchdown lands; a daily seed changes the layout deterministically.
+    9. The 100 hand-picked names are unique; planets 1–200 are all distinct (`tooSimilar`); the daily name avoids every hand-picked one; every name is one capitalised word, and generated names are stable.
+    10. Passing a checkpoint makes it the respawn point; resting on a pad refuels; mines start on planet 11 and gates on 21; no leading turrets before 31; reversed gravity on 20 and never in band 1; band 1 stays gentle and band 2 is a clear step up; an upside-down slow ceiling touchdown lands on a reversed planet; a daily seed changes the layout deterministically.
+    11. The ghost turns the short way across ±180°; thrust skips the death pause only after the first 0.7 s; a shot absorbed by the shield emits `shieldHit` and isn't fatal.
 - **`python scripts/smoke.py [out_dir] [tier]`**: Playwright (Chromium on SwiftShader) against `npm run preview`, with a preloaded save (3 planets cleared, tutorial seen). Desktop: Continue is offered; Options opens and closes; Planet select lists planets 1–4 and starts planet 2; the intro card shows; thrust, rotate, fire; pause, the loop **idling** while paused and waking on resume; the planet summary after towing the pod out, and Next planet; pause → Main menu. Emulated 412 × 860 touch phone: Options, How to play (three pages), Planet select and pause → Main menu by tap; the nipplejs stick (steer, then full push → thrust); holding ◎ and ▲ and verifying release. Landscape 860 × 412 phone: every main-menu item is on screen, and Options works by tap. It fails on any page error and saves screenshots. Software GL runs at a few fps, so every check **polls** game state through `window.__game` / `window.__running` instead of sleeping, and boot waits up to 3 minutes (the high tier in software is slow).
 - **`npm run typecheck`** and **`npm run format`** (Prettier with the repo's `.prettierrc`).
 
@@ -426,6 +441,8 @@ Then options are applied and the main menu shows. Any error lands in the splash 
 - `npm run build` = `tsc --noEmit && vite build`. `dist/` holds ≈ 98 kB of game JS (≈ 36 kB gzipped) plus a ≈ 580 kB three.js chunk (≈ 150 kB gzipped), split so browsers keep three.js cached across game updates.
 - `vite.config.ts` sets `base: '/thrust-force/'` to match `https://<user>.github.io/thrust-force/`. If you rename the repo, change `base`.
 - `.github/workflows/deploy-pages.yml` runs on every push to `main` (or manually): checkout → Node 22 → `npm ci` → `npm run build` → upload `dist` → `actions/deploy-pages`. In the repo settings, set Pages → Source to **GitHub Actions**.
+- **Installable / offline**: `public/manifest.webmanifest` (full screen, icons from the emblem) and `public/sw.js`, registered by main.ts in production builds only. Pages are network first (a new deploy shows on the next visit; the cache covers offline); hashed build assets, icons and fonts are cache first. Bump `CACHE` in `sw.js` to force a clean slate.
+- **Link previews**: `index.html` carries description and Open Graph tags; `og:url` and `og:image` (`icons/og-card.png`) are absolute URLs, so update them along with `base` if the site moves.
 - Licence: MIT (`LICENSE`).
 
 ## 17. Tuning reference
@@ -445,7 +462,9 @@ Feel constants are in `CFG` (`core/game.ts`); per-planet scaling is in `difficul
 | `bulletSpeed` / `reload`    | 24 / 0.17 s       | player gun                                    |
 | `reactorTime`               | 10 s              | escape window                                 |
 | `stun`                      | 4 s               | turret silence per reactor hit                |
-| `MAX_DIFFICULTY_AT`         | 50                | planet where the curve reaches full           |
+| `MAX_DIFFICULTY_AT`         | 100               | planet where the curve reaches full           |
+| `BAND`                      | 10                | planets per difficulty band                   |
+| `skipDeathAfter`            | 0.7 s             | death pause before thrust / fire skips it     |
 | `NEON_LUMA`                 | 1.4               | perceived brightness of every theme's neon    |
 | `CHUNK` / `MARGIN`          | 24 / 12 rows      | rock streaming slice size / extra rock        |
 | governor                    | 26 ms · 2 s · 3 s | slow threshold · sustain · grace              |
