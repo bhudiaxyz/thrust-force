@@ -58,7 +58,7 @@ Architecture and all technical detail are in [DESIGN.md](DESIGN.md).
 
 | Control                | Action                                       |
 | ---------------------- | -------------------------------------------- |
-| Left-half stick (drag) | Point the ship's nose in the stick direction |
+| Joypad (bottom left)   | Point the ship's nose in the stick direction |
 | Stick pushed fully out | Thrust while steering                        |
 | ▲                      | Thrust                                       |
 | ●                      | Fire                                         |
@@ -66,7 +66,7 @@ Architecture and all technical detail are in [DESIGN.md](DESIGN.md).
 | ❚❚                     | Pause                                        |
 | Map icon               | Open / close the minimap                     |
 
-Every menu is tappable. The stick appears wherever your left thumb lands; the left-handed option in Options mirrors the layout.
+Every menu is tappable. The joypad sits in the bottom-left corner and the buttons in the bottom right; the left-handed option in Options mirrors the layout. The view fits the screen in full screen or with the browser bars showing, portrait or landscape.
 
 ### Gamepad
 

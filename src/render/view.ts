@@ -53,6 +53,9 @@
  *     turret barrels).
  *   - The camera sits 4 units below its look-at point so floors show their tops and tunnels
  *     read as 3D; portrait screens pull the camera back (z = 30 / aspect).
+ *   - The chase target is clamped so the view stays inside the built rock (MARGIN beyond the
+ *     sides and bottom) for the current aspect, so full screen vs browser bars and portrait vs
+ *     landscape never show the void past the planet.
  *
  * See also: core/game.ts (state it draws), fx/effects.ts, render/rock.ts, core/palette.ts, render/tier.ts, main.ts; DESIGN.md
  * "7. Rendering".
