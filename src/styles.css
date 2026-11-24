@@ -648,7 +648,10 @@ body {
     }
 }
 
-/* Touch controls: only on coarse pointers. Left half = steering stick, right = buttons. */
+/* Touch controls: only on coarse pointers. A fixed joypad in the bottom-left corner, buttons on
+ * the bottom right. The joypad zone is a square a little larger than the 120 px stick; it clears
+ * the buttons on phones 390 px wide and up (narrower, the shield button overlaps the stick's rim
+ * and, being on top, still takes its taps). */
 #touch,
 #joy {
     display: none;
@@ -660,11 +663,14 @@ body {
     #joy {
         display: block;
         position: fixed;
-        left: 0;
-        bottom: 0;
-        width: 50%;
-        height: 70%;
+        left: max(0.5rem, env(safe-area-inset-left));
+        bottom: max(0.25rem, env(safe-area-inset-bottom));
+        width: 160px;
+        height: 160px;
         touch-action: none;
+    }
+    #joy .back {
+        border: 1px solid var(--line); /* outlined like the touch buttons */
     }
     #touch {
         position: fixed;
@@ -1014,7 +1020,7 @@ body {
 @media (pointer: coarse) {
     body.lefty #joy {
         left: auto;
-        right: 0;
+        right: max(0.5rem, env(safe-area-inset-right));
     }
     body.lefty #touch {
         left: 0;

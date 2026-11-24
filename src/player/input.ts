@@ -11,7 +11,8 @@
  *     preventDefault so arrows and Space don't scroll or press focused buttons.
  *   - Touch buttons (#touch [data-k]): pointerdown + setPointerCapture sets the field,
  *     pointerup / pointercancel clear it, so sliding a thumb off a button still releases it.
- *   - Stick (#joy, left half): a nipplejs dynamic joystick. steer(shipAngle) aims absolutely:
+ *   - Stick (#joy, bottom-left corner; bottom-right when left-handed): a fixed nipplejs joypad
+ *     (static mode), always shown during a run. steer(shipAngle) aims absolutely:
  *     it presses left / right until the nose is within 0.06 rad of the stick direction; pushes
  *     under 25% are ignored; over 75% also thrusts, so one thumb flies the ship.
  *   - Gamepads (standard mapping, polled in steer()): left stick aims absolutely like the touch
@@ -123,12 +124,16 @@ export function setupInput() {
         btn.addEventListener("pointercancel", set(false));
     });
 
+    // A fixed joypad centred in its bottom-corner zone. dynamicPage re-measures on every touch,
+    // because the zone is hidden at creation and moves on rotation, full screen and left-handed.
     const joy = nipplejs.create({
         zone: document.getElementById("joy")!,
-        mode: "dynamic",
+        mode: "static",
+        position: { left: "50%", top: "50%" },
+        dynamicPage: true,
         size: STICK,
-        color: COLORS.ui.stick,
-        restOpacity: 0.6,
+        color: { front: COLORS.ui.stick, back: COLORS.ui.stickBase },
+        restOpacity: 0.7,
     });
     joy.on("move", (evt) => {
         const d = evt.data;

@@ -811,8 +811,15 @@ export class View {
         // Chase camera: lead with velocity, look slightly up from below for depth, shake.
         const aspect = this.camera.aspect;
         const z = aspect < 1 ? 30 / Math.max(aspect, 0.5) : CAM_Z;
-        const tx = s.x + s.vx * 0.3,
-            ty = s.y + s.vy * 0.3;
+        // Keep the view inside the built rock (MARGIN beyond the sides and bottom) whatever the
+        // screen shape: the visible half-size at the rock's back faces (z −1.5) depends on aspect,
+        // so a tall portrait or wide landscape screen (full screen vs browser bars) stops earlier.
+        const half = (z + 1.5) * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2)) + 0.5;
+        const loX = half * aspect - MARGIN,
+            hiX = lv.w + MARGIN - half * aspect;
+        const vx = s.x + s.vx * 0.3;
+        const tx = loX < hiX ? Math.min(Math.max(vx, loX), hiX) : lv.w / 2,
+            ty = Math.max(s.y + s.vy * 0.3, half - MARGIN);
         const c = this.camera.position;
         const k = 1 - Math.exp(-dt * 4);
         if (this.time < 0.1 || Math.hypot(c.x - tx, c.y - ty) > 60) c.set(tx, ty, z);

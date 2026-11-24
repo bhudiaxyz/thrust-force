@@ -111,13 +111,15 @@ with sync_playwright() as p:
     cdp = ctx.new_cdp_session(m)
     touch = lambda t, pts: cdp.send('Input.dispatchTouchEvent', {'type': t, 'touchPoints': pts})
     # Stick dragged right -> nose turns right (angle goes negative), no thrust below 75% push.
-    touch('touchStart', [{'x': 100, 'y': 600, 'id': 1}])
+    # The joypad is fixed in the bottom-left corner: start at its centre.
+    jx, jy = m.evaluate("(() => { const r = document.getElementById('joy').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()")
+    touch('touchStart', [{'x': jx, 'y': jy, 'id': 1}])
     for i in range(1, 8):
-        touch('touchMove', [{'x': 100 + i * 4, 'y': 600, 'id': 1}])
+        touch('touchMove', [{'x': jx + i * 4, 'y': jy, 'id': 1}])
     until(m, 'window.__game.ship.a < -0.3', 'stick steer')
     m.screenshot(path=f'{out}/mobile-stick.png')
     # Pushed fully -> thrust.
-    touch('touchMove', [{'x': 100, 'y': 520, 'id': 1}])
+    touch('touchMove', [{'x': jx, 'y': jy - 70, 'id': 1}])
     until(m, 'window.__game.thrusting', 'stick thrust')
     touch('touchEnd', [])
     until(m, '!window.__game.thrusting', 'stick release')

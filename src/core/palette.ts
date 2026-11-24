@@ -203,7 +203,8 @@ export const COLORS = {
         "panel-base": "#060a18",
         "panel-raised": "#0f1830",
         "panel-hover": "#182648",
-        stick: "rgba(102, 224, 255, 0.45)",
+        stick: "rgba(102, 224, 255, 0.45)", // joypad knob
+        stickBase: "rgba(102, 224, 255, 0.1)", // joypad base, faint like the touch buttons
     },
 };
 
@@ -238,5 +239,5 @@ export function ramp(stops: [number, RGB][], t: number, out: RGB = [0, 0, 0]): R
 /** Push COLORS.ui into the CSS custom properties styles.css builds its tints from. */
 export function applyUiColors() {
     const root = document.documentElement.style;
-    for (const [k, v] of Object.entries(COLORS.ui)) if (k !== "stick") root.setProperty(`--${k}`, v);
+    for (const [k, v] of Object.entries(COLORS.ui)) if (!k.startsWith("stick")) root.setProperty(`--${k}`, v);
 }
