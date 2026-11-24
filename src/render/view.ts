@@ -719,7 +719,9 @@ export class View {
         }
 
         const p = g.pod;
-        this.fx.trail(0, s.x + Math.sin(s.a) * 0.5, s.y - Math.cos(s.a) * 0.5, alive, g.thrusting && alive, dt);
+        // The ship trail starts just past the rear wing tips (hull y −0.62), not inside the hull.
+        const TAIL = 0.85;
+        this.fx.trail(0, s.x + Math.sin(s.a) * TAIL, s.y - Math.cos(s.a) * TAIL, alive, g.thrusting && alive, dt);
         this.fx.trail(1, p.x, p.y, p.attached && alive, false, dt);
         this.pod.visible = p.attached ? alive : true;
         this.pod.position.set(p.x, p.y, 0);
