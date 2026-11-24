@@ -143,6 +143,9 @@ export const COLORS = {
         debrisHull: [0.55, 0.62, 0.72] as RGB,
         star: [1.0, 1.0, 1.1] as RGB, // multiplied by a random 0.4..1.8 brightness
         dust: [0.8, 0.85, 1.0] as RGB, // cave dust motes, times a random 0.25..0.75
+        // Dust clumps: each takes one of the planet's neon, its rock, or these two, kept faint.
+        clumpOre: [1.6, 0.8, 0.2] as RGB,
+        clumpCrystal: [0.4, 1.2, 1.6] as RGB,
     },
     /** Cooling ember debris, sampled with ramp(): t = remaining life, 1 → 0. */
     ember: [

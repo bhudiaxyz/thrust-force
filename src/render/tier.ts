@@ -51,6 +51,8 @@ export interface TierSettings {
     bump: boolean;
     /** Floating dust motes inside the planet. */
     dust: number;
+    /** Faint coloured dust clumps drifting in the caves (CLUMP_N motes each). */
+    clumps: number;
     particles: number;
     stars: number;
     /** Main-thread ms per frame for streaming rock chunks after a planet loads. */
@@ -65,6 +67,7 @@ export const TIER_SETTINGS: Record<Tier, TierSettings> = {
         shadowMap: 4096,
         bump: true,
         dust: 500,
+        clumps: 40,
         particles: 3000,
         stars: 1800,
         buildMs: 8,
@@ -76,6 +79,7 @@ export const TIER_SETTINGS: Record<Tier, TierSettings> = {
         shadowMap: 1024,
         bump: true,
         dust: 200,
+        clumps: 28,
         particles: 2000,
         stars: 1200,
         buildMs: 5,
@@ -87,6 +91,7 @@ export const TIER_SETTINGS: Record<Tier, TierSettings> = {
         shadowMap: 0,
         bump: false,
         dust: 0,
+        clumps: 20,
         particles: 2000,
         stars: 1200,
         buildMs: 5,
@@ -98,6 +103,7 @@ export const TIER_SETTINGS: Record<Tier, TierSettings> = {
         shadowMap: 0,
         bump: false,
         dust: 0,
+        clumps: 12,
         particles: 900,
         stars: 600,
         buildMs: 3,

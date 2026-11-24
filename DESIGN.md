@@ -305,6 +305,7 @@ Ship (extruded arrowhead, neon `EdgesGeometry` outline, canopy, flickering flame
 
 - **Ribbon trails**: `trail(i, x, y, on, hot, dt)` draws two glowing triangle strips (0 = ship tail, 1 = towed pod) in the planet's neon, tapering and fading to the tail and brighter while thrusting. A jump of more than 4 units (a respawn) restarts them.
 - **Cave dust** (high tiers): motes drifting in a 60 × 44 box that wraps around the camera, shown only inside the planet.
+- **Dust clumps** (every tier: 40 / 28 / 20 / 12 clumps by tier, `clumps`): small clusters of `CLUMP_N` (8) faint motes within `CLUMP_R` (0.7) that drift as one in the same wrapped box, swirl slowly and breathe. Each clump takes one colour source for the planet (its neon, its rock, ore amber `clumpOre` or crystal cyan `clumpCrystal`), scaled by `CLUMP_DIM` (0.5) so they stay faint; `setNeon` / `setRockColour` recolour them on a new planet. They're depth-tested, so rock hides them and they only show in open cave.
 - `hiddenObjects()` and `setDebrisWarm()` let `View.warmup()` compile these shaders before play (§10.3). `dotTexture()` and `pointsLayer()` are shared with `View` for bullets and stars.
 
 ## 9. Palette and themes (`core/palette.ts`)

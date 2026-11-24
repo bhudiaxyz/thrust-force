@@ -17,6 +17,9 @@
  *   - update(dt, level, camX, camY, inside): integrates and compacts sparks and debris, expands
  *     rings, decays the flash, drifts dust in a box wrapped around the camera (shown only when
  *     inside the planet).
+ *   - Dust clumps (every tier, ts.clumps): small clusters of CLUMP_N faint motes that drift as one
+ *     and swirl slowly, each tinted from the planet's neon, rock, ore amber or crystal cyan
+ *     (recoloured by setNeon / setRockColour). Depth-tested, so rock hides them: caves only.
  *   - setNeon(rgb) per planet; reset() on a new planet; hiddenObjects() for shader warm-up.
  *   - shake: camera-shake amount raised by big effects; View reads and decays it.
  *   - trail(i, x, y, on, hot, dt): two glowing ribbon trails (0 = ship tail, 1 = towed pod),
@@ -48,6 +51,10 @@ const TRAIL_N = 36,
     TRAIL_W = 0.16;
 /** Cave dust volume (world units) wrapped around the camera. */
 const DUST_BOX: [number, number] = [60, 44];
+/** Motes per dust clump, the clump radius, and how faint clumps are (colour scale). */
+const CLUMP_N = 8,
+    CLUMP_R = 0.7,
+    CLUMP_DIM = 0.5;
 
 /** Soft round sprite shared by every Points layer (alpha mask; colour comes from vertices). */
 export function dotTexture() {
@@ -107,6 +114,13 @@ export class Effects {
     private rings: { mesh: THREE.Mesh; life: number; max: number; size: number }[] = [];
     private flash = new THREE.PointLight(C.light.flash, 0, 40, 1.4);
     private dust: THREE.Points | null = null;
+    // Dust clumps: centres (x, y, z) per clump, mote offsets (radius, angle, z, spin) per mote, a
+    // colour source per clump (0 neon, 1 rock, 2 ore, 3 crystal) and a brightness per mote.
+    private clumps: THREE.Points;
+    private cCentre: Float32Array;
+    private cMote: Float32Array;
+    private cKind: Uint8Array;
+    private cBright: Float32Array;
     private time = 0;
     // Scratch objects for the per-frame path.
     private m = new THREE.Matrix4();
@@ -181,6 +195,29 @@ export class Effects {
             scene.add(mesh);
         }
 
+        const nc = ts.clumps;
+        this.clumps = pointsLayer(nc * CLUMP_N, 0.2, tex);
+        this.cCentre = new Float32Array(nc * 3);
+        this.cMote = new Float32Array(nc * CLUMP_N * 4);
+        this.cKind = new Uint8Array(nc);
+        this.cBright = new Float32Array(nc * CLUMP_N);
+        for (let c = 0; c < nc; c++) {
+            this.cCentre[c * 3] = Math.random() * DUST_BOX[0];
+            this.cCentre[c * 3 + 1] = Math.random() * DUST_BOX[1];
+            this.cCentre[c * 3 + 2] = -1 + Math.random() * 2;
+            this.cKind[c] = Math.floor(Math.random() * 4);
+        }
+        for (let k = 0; k < nc * CLUMP_N; k++) {
+            this.cMote[k * 4] = CLUMP_R * Math.sqrt(Math.random()); // even spread over the disc
+            this.cMote[k * 4 + 1] = Math.random() * Math.PI * 2;
+            this.cMote[k * 4 + 2] = (Math.random() - 0.5) * CLUMP_R;
+            this.cMote[k * 4 + 3] = (0.15 + Math.random() * 0.35) * (Math.random() < 0.5 ? -1 : 1);
+            this.cBright[k] = 0.4 + Math.random() * 0.6;
+        }
+        this.clumps.geometry.setDrawRange(0, nc * CLUMP_N);
+        this.recolourClumps();
+        scene.add(this.clumps);
+
         if (ts.dust > 0) {
             const n = ts.dust;
             this.dust = pointsLayer(n, 0.12, tex);
@@ -202,6 +239,7 @@ export class Effects {
 
     setNeon(rgb: RGB) {
         this.neon = rgb;
+        this.recolourClumps();
     }
 
     /** New planet: drop everything in flight. */
@@ -212,6 +250,21 @@ export class Effects {
 
     setRockColour(rgb: RGB) {
         this.rock = rgb;
+        this.recolourClumps();
+    }
+
+    /** Tint every clump from its colour source for this planet (on planet change only). */
+    private recolourClumps() {
+        const col = this.clumps.geometry.attributes.color.array as Float32Array;
+        const src = [this.neon, this.rock, C.fx.clumpOre, C.fx.clumpCrystal];
+        for (let k = 0; k < this.cBright.length; k++) {
+            const rgb = src[this.cKind[Math.floor(k / CLUMP_N)]],
+                v = this.cBright[k] * CLUMP_DIM;
+            col[k * 3] = rgb[0] * v;
+            col[k * 3 + 1] = rgb[1] * v;
+            col[k * 3 + 2] = rgb[2] * v;
+        }
+        this.clumps.geometry.attributes.color.needsUpdate = true;
     }
 
     /**
@@ -263,7 +316,7 @@ export class Effects {
 
     /** Objects that start hidden, so View.warmup() can compile their shaders up front. */
     hiddenObjects(): THREE.Object3D[] {
-        return this.rings.map((r) => r.mesh);
+        return [...this.rings.map((r) => r.mesh), this.clumps];
     }
 
     /** Debris draws nothing at count 0; warm-up temporarily shows one instance. */
@@ -363,6 +416,7 @@ export class Effects {
             (r.mesh.material as THREE.MeshBasicMaterial).opacity = (1 - t) * (1 - t);
         }
         if (this.dust) this.updateDust(dt, camX, camY, inside);
+        this.updateClumps(dt, camX, camY, inside);
     }
 
     private updateSparks(dt: number, gravity: number) {
@@ -461,5 +515,35 @@ export class Effects {
             dp[k + 1] = ((((y - oy) % bh) + bh) % bh) + oy;
         }
         dust.geometry.attributes.position.needsUpdate = true;
+    }
+
+    /** Drift clump centres (wrapped around the camera like the motes) and swirl each clump's motes. */
+    private updateClumps(dt: number, camX: number, camY: number, inside: boolean) {
+        this.clumps.visible = inside;
+        if (!inside) return;
+        const cc = this.cCentre,
+            mo = this.cMote;
+        const pos = this.clumps.geometry.attributes.position.array as Float32Array;
+        const [bw, bh] = DUST_BOX;
+        const ox = camX - bw / 2,
+            oy = camY - bh / 2;
+        for (let c = 0; c < cc.length / 3; c++) {
+            const ph = c * 1.7 + this.time * 0.2;
+            const x = cc[c * 3] + Math.sin(ph) * 0.25 * dt,
+                y = cc[c * 3 + 1] + (0.08 + Math.cos(ph * 0.8) * 0.12) * dt;
+            cc[c * 3] = ((((x - ox) % bw) + bw) % bw) + ox;
+            cc[c * 3 + 1] = ((((y - oy) % bh) + bh) % bh) + oy;
+            // Breathe: the clump swells and shrinks a little.
+            const swell = 1 + 0.2 * Math.sin(this.time * 0.6 + c);
+            for (let j = 0; j < CLUMP_N; j++) {
+                const k = c * CLUMP_N + j;
+                const a = (mo[k * 4 + 1] += mo[k * 4 + 3] * dt);
+                const r = mo[k * 4] * swell;
+                pos[k * 3] = cc[c * 3] + Math.cos(a) * r;
+                pos[k * 3 + 1] = cc[c * 3 + 1] + Math.sin(a) * r * 0.8;
+                pos[k * 3 + 2] = cc[c * 3 + 2] + mo[k * 4 + 2];
+            }
+        }
+        this.clumps.geometry.attributes.position.needsUpdate = true;
     }
 }
