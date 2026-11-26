@@ -48,6 +48,7 @@ ref_images/
 *.md
 !README.md
 !DESIGN.md
+!CONTRIBUTING.md
 
 # Local environment and logs
 .env
